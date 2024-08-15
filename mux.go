@@ -10,7 +10,7 @@ import (
 // events and their draw functions get redirected to the root Env.
 type Mux struct {
 	addEventsIn chan<- chan<- Event
-	sizeSrv server[image.Rectangle]
+	size sharedVal[image.Rectangle]
 	draw chan<- func(draw.Image) image.Rectangle
 }
 
@@ -20,11 +20,11 @@ type Mux struct {
 // created by the Mux.
 func NewMux(env Env) (mux *Mux, master Env) {
 	addEventsIn := make(chan chan<- Event)
-	sizeSrv := newServer[image.Rectangle]()
+	size := newSharedVal[image.Rectangle]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	mux = &Mux{
 		addEventsIn: addEventsIn,
-		sizeSrv:     sizeSrv,
+		size:     size,
 		draw:        drawChan,
 	}
 
@@ -33,7 +33,7 @@ func NewMux(env Env) (mux *Mux, master Env) {
 
 		defer close(env.Draw())
 		defer close(addEventsIn)
-		defer sizeSrv.close()
+		defer size.close()
 		defer func() {
 			for _, eventsIn := range eventsIns {
 				close(eventsIn)
@@ -52,7 +52,7 @@ func NewMux(env Env) (mux *Mux, master Env) {
 					return
 				}
 				if resize, ok := e.(Resize); ok {
-					sizeSrv.update <- resize.Rectangle
+					size.set <- resize.Rectangle
 				}
 				for _, eventsIn := range eventsIns {
 					eventsIn <- e
@@ -88,9 +88,8 @@ func (mux *Mux) makeEnv(master bool) Env {
 	env := &muxEnv{eventsOut, drawChan}
 
 	mux.addEventsIn <- eventsIn
-	// make sure to always send a resize event to a new Env if we got the size already
-	// that means it missed the resize event by the root Env
-	eventsIn <- Resize{mux.sizeSrv.get()}
+	// make sure to always send a resize event to a new Env
+	eventsIn <- Resize{mux.size.get()}
 
 	go func() {
 		func() {
