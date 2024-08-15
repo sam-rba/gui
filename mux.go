@@ -10,10 +10,12 @@ import (
 // create multiple virtual Envs that all interact with the root Env. They receive the same
 // events and their draw functions get redirected to the root Env.
 type Mux struct {
-	mu         sync.Mutex
-	lastResize Event
-	eventsIns  []chan<- Event
-	draw       chan<- func(draw.Image) image.Rectangle
+	sizeSrv server[image.Rectangle]
+
+	mu        sync.Mutex
+	eventsIns []chan<- Event
+
+	draw chan<- func(draw.Image) image.Rectangle
 }
 
 // NewMux creates a new Mux that multiplexes the given Env. It returns the Mux along with
@@ -21,9 +23,12 @@ type Mux struct {
 // closing the Draw() channel on the master Env closes the whole Mux and all other Envs
 // created by the Mux.
 func NewMux(env Env) (mux *Mux, master Env) {
+	sizeSrv := newServer[image.Rectangle]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	mux = &Mux{draw: drawChan}
-	master = mux.makeEnv(true)
+	mux = &Mux{
+		sizeSrv: sizeSrv,
+		draw:    drawChan,
+	}
 
 	go func() {
 		for d := range drawChan {
@@ -33,11 +38,12 @@ func NewMux(env Env) (mux *Mux, master Env) {
 	}()
 
 	go func() {
+		defer sizeSrv.close()
 		for e := range env.Events() {
-			mux.mu.Lock()
 			if resize, ok := e.(Resize); ok {
-				mux.lastResize = resize
+				sizeSrv.update <- resize.Rectangle
 			}
+			mux.mu.Lock()
 			for _, eventsIn := range mux.eventsIns {
 				eventsIn <- e
 			}
@@ -50,6 +56,7 @@ func NewMux(env Env) (mux *Mux, master Env) {
 		mux.mu.Unlock()
 	}()
 
+	master = mux.makeEnv(true)
 	return mux, master
 }
 
@@ -75,12 +82,10 @@ func (mux *Mux) makeEnv(master bool) Env {
 
 	mux.mu.Lock()
 	mux.eventsIns = append(mux.eventsIns, eventsIn)
+	mux.mu.Unlock()
 	// make sure to always send a resize event to a new Env if we got the size already
 	// that means it missed the resize event by the root Env
-	if mux.lastResize != nil {
-		eventsIn <- mux.lastResize
-	}
-	mux.mu.Unlock()
+	eventsIn <- Resize{mux.sizeSrv.get()}
 
 	go func() {
 		func() {
