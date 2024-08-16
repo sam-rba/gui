@@ -10,8 +10,8 @@ import (
 // events and their draw functions get redirected to the root Env.
 type Mux struct {
 	addEventsIn chan<- chan<- Event
-	size sharedVal[image.Rectangle]
-	draw chan<- func(draw.Image) image.Rectangle
+	size        sharedVal[image.Rectangle]
+	draw        chan<- func(draw.Image) image.Rectangle
 }
 
 // NewMux creates a new Mux that multiplexes the given Env. It returns the Mux along with
@@ -24,7 +24,7 @@ func NewMux(env Env) (mux *Mux, master Env) {
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	mux = &Mux{
 		addEventsIn: addEventsIn,
-		size:     size,
+		size:        size,
 		draw:        drawChan,
 	}
 
@@ -123,4 +123,7 @@ func (mux *Mux) makeEnv(master bool) Env {
 	return env
 }
 
-func drain[T any](c <-chan T) { for range c {} }
+func drain[T any](c <-chan T) {
+	for range c {
+	}
+}

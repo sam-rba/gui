@@ -11,7 +11,7 @@ package gui
 // A sharedVal should be closed after use.
 type sharedVal[T any] struct {
 	request chan<- chan T
-	set  chan<- T
+	set     chan<- T
 }
 
 func newSharedVal[T any]() sharedVal[T] {
