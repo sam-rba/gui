@@ -42,6 +42,7 @@ func newSharedVal[T any]() sharedVal[T] {
 // get makes a synchronous request and returns the stored value.
 func (sv sharedVal[T]) get() T {
 	c := make(chan T)
+	defer close(c)
 	sv.request <- c
 	return <-c
 }
