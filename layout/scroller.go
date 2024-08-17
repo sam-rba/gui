@@ -50,7 +50,6 @@ func clamp(val, a, b int) int {
 }
 
 func (s *Scroller) Intercept(env gui.Env) gui.Env {
-	evs := env.Events()
 	out, in := gui.MakeEventsChan()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	ret := &muxEnv{out, drawChan}
@@ -77,7 +76,7 @@ func (s *Scroller) Intercept(env gui.Env) gui.Env {
 	}()
 
 	go func() {
-		for ev := range evs {
+		for ev := range env.Events() {
 			switch ev := ev.(type) {
 			case win.MoMove:
 				mu.Lock()
