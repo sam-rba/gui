@@ -32,8 +32,8 @@ func (mux *Mux) Layout() Layout {
 // NewMux should only be used internally by Layouts.
 // It has mostly the same behaviour as gui.Mux, except for its use of an underlying Layout
 // for modifying the gui.Resize events sent to the childs.
-func NewMux(ev gui.Env, envs []*gui.Env, l Layout) (mux *Mux, master gui.Env) {
-	env := l.Intercept(ev)
+func NewMux(parent gui.Env, children []*gui.Env, l Layout) (mux *Mux, master gui.Env) {
+	parent = l.Intercept(parent)
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	mux = &Mux{
 		layout: l,
@@ -43,13 +43,13 @@ func NewMux(ev gui.Env, envs []*gui.Env, l Layout) (mux *Mux, master gui.Env) {
 	events := make(chan gui.Event)
 	go func() {
 		for d := range drawChan {
-			env.Draw() <- d
+			parent.Draw() <- d
 		}
-		close(env.Draw())
+		close(parent.Draw())
 	}()
 
 	go func() {
-		for e := range env.Events() {
+		for e := range parent.Events() {
 			events <- e
 		}
 	}()
@@ -63,8 +63,8 @@ func NewMux(ev gui.Env, envs []*gui.Env, l Layout) (mux *Mux, master gui.Env) {
 				mux.lastResize = resize
 				rect := resize.Rectangle
 				lay := mux.layout.Lay(rect)
-				if len(lay) < len(envs) {
-					log.Printf("Lay of %T is not large enough (%d) for %d childs, skipping\n", l, len(lay), len(envs))
+				if len(lay) < len(children) {
+					log.Printf("Lay of %T is not large enough (%d) for %d childs, skipping\n", l, len(lay), len(children))
 					mux.mu.Unlock()
 					continue
 				}
@@ -89,8 +89,8 @@ func NewMux(ev gui.Env, envs []*gui.Env, l Layout) (mux *Mux, master gui.Env) {
 		mux.mu.Unlock()
 	}()
 
-	for _, en := range envs {
-		*en, _ = mux.makeEnv(false)
+	for _, child := range children {
+		*child, _ = mux.makeEnv(false)
 	}
 	return
 }
