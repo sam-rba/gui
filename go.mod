@@ -3,6 +3,7 @@ module github.com/faiface/gui
 go 1.22.4
 
 require (
+	git.samanthony.xyz/share v0.0.0
 	github.com/faiface/mainthread v0.0.0-20171120011319-8b78f0a41ae3
 	github.com/fogleman/gg v1.3.0
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71

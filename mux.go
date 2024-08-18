@@ -3,6 +3,8 @@ package gui
 import (
 	"image"
 	"image/draw"
+
+	"git.samanthony.xyz/share"
 )
 
 // Mux can be used to multiplex an Env, let's call it a root Env. Mux implements a way to
@@ -10,7 +12,7 @@ import (
 // events and their draw functions get redirected to the root Env.
 type Mux struct {
 	addEventsIn chan<- chan<- Event
-	size        sharedVal[image.Rectangle]
+	size        share.Val[image.Rectangle]
 	draw        chan<- func(draw.Image) image.Rectangle
 }
 
@@ -20,7 +22,7 @@ type Mux struct {
 // created by the Mux.
 func NewMux(env Env) (mux *Mux, master Env) {
 	addEventsIn := make(chan chan<- Event)
-	size := newSharedVal[image.Rectangle]()
+	size := share.NewVal[image.Rectangle]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	mux = &Mux{
 		addEventsIn: addEventsIn,
@@ -33,7 +35,7 @@ func NewMux(env Env) (mux *Mux, master Env) {
 
 		defer close(env.Draw())
 		defer close(addEventsIn)
-		defer size.close()
+		defer size.Close()
 		defer func() {
 			for _, eventsIn := range eventsIns {
 				close(eventsIn)
@@ -52,7 +54,7 @@ func NewMux(env Env) (mux *Mux, master Env) {
 					return
 				}
 				if resize, ok := e.(Resize); ok {
-					size.set <- resize.Rectangle
+					size.Set <- resize.Rectangle
 				}
 				for _, eventsIn := range eventsIns {
 					eventsIn <- e
@@ -89,7 +91,7 @@ func (mux *Mux) makeEnv(master bool) Env {
 
 	mux.addEventsIn <- eventsIn
 	// make sure to always send a resize event to a new Env
-	eventsIn <- Resize{mux.size.get()}
+	eventsIn <- Resize{mux.size.Get()}
 
 	go func() {
 		func() {
