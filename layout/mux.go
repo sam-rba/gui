@@ -4,8 +4,8 @@ import (
 	"image"
 	"image/draw"
 	"log"
-	"sync"
 
+	"git.samanthony.xyz/share"
 	"github.com/faiface/gui"
 )
 
@@ -14,14 +14,14 @@ import (
 // events apart from gui.Resize, and their draw functions get redirected to the root Env.
 //
 // All gui.Resize events are instead modified according to the underlying Layout.
-// The master Env gets the original gui.Resize events.
 type Mux struct {
-	mu         sync.Mutex
-	lastResize gui.Event
-	eventsIns  []chan<- gui.Event
-	draw       chan<- func(draw.Image) image.Rectangle
+	// Sending any value to Kill will terminate the Mux.
+	Kill chan<- any
 
-	layout Layout
+	bounds    share.Val[image.Rectangle]
+	draw      chan<- func(draw.Image) image.Rectangle
+	eventsIns share.ConstSlice[chan<- gui.Event]
+	layout    Layout
 }
 
 // Layout returns the underlying Layout of the Mux.
@@ -29,70 +29,77 @@ func (mux *Mux) Layout() Layout {
 	return mux.layout
 }
 
-// NewMux should only be used internally by Layouts.
-// It has mostly the same behaviour as gui.Mux, except for its use of an underlying Layout
-// for modifying the gui.Resize events sent to the childs.
-func NewMux(parent gui.Env, children []*gui.Env, l Layout) (mux *Mux, master gui.Env) {
-	parent = l.Intercept(parent)
+func NewMux(parent gui.Env, children []*gui.Env, layout Layout) Mux {
+	parent = layout.Intercept(parent)
+
+	kill := make(chan any)
+	bounds := share.NewVal[image.Rectangle]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	mux = &Mux{
-		layout: l,
-		draw:   drawChan,
+	eventsIns := func() share.ConstSlice[chan<- gui.Event] { // create child Env's
+		evIns := make([]chan<- gui.Event, len(children))
+		for i, child := range children {
+			*child, evIns[i] = makeEnv(drawChan)
+		}
+		return share.NewConstSlice(evIns)
+	}()
+	mux := Mux{
+		kill,
+		bounds,
+		drawChan,
+		eventsIns,
+		layout,
 	}
-	master, masterIn := mux.makeEnv(true)
-	events := make(chan gui.Event)
-	go func() {
-		for d := range drawChan {
-			parent.Draw() <- d
-		}
-		close(parent.Draw())
-	}()
 
 	go func() {
-		for e := range parent.Events() {
-			events <- e
-		}
-	}()
+		defer close(parent.Draw())
+		defer close(kill)
+		defer bounds.Close()
+		defer close(drawChan)
+		defer func() {
+			for eventsIn := range eventsIns.Elems() {
+				close(eventsIn)
+			}
+			eventsIns.Close()
+		}()
 
-	go func() {
-		for e := range events {
-			// master gets a copy of all events to the Mux
-			masterIn <- e
-			mux.mu.Lock()
-			if resize, ok := e.(gui.Resize); ok {
-				mux.lastResize = resize
-				rect := resize.Rectangle
-				lay := mux.layout.Lay(rect)
-				if len(lay) < len(children) {
-					log.Printf("Lay of %T is not large enough (%d) for %d childs, skipping\n", l, len(lay), len(children))
-					mux.mu.Unlock()
-					continue
-				}
-
-				// Send appropriate resize Events to childs
-				for i, eventsIn := range mux.eventsIns {
-					resize.Rectangle = lay[i]
-					eventsIn <- resize
-				}
-
-			} else {
-				for _, eventsIn := range mux.eventsIns {
-					eventsIn <- e
+		for {
+			select {
+			case <-kill:
+				return
+			case d := <-drawChan:
+				parent.Draw() <- d
+			case e := <-parent.Events():
+				if resize, ok := e.(gui.Resize); ok {
+					bounds.Set <- resize.Rectangle
+					mux.resizeChildren()
+				} else {
+					for eventsIn := range eventsIns.Elems() {
+						eventsIn <- e
+					}
 				}
 			}
-			mux.mu.Unlock()
 		}
-		mux.mu.Lock()
-		for _, eventsIn := range mux.eventsIns {
-			close(eventsIn)
-		}
-		mux.mu.Unlock()
 	}()
 
-	for _, child := range children {
-		*child, _ = mux.makeEnv(false)
+	// First event of a new Env must be Resize.
+	mux.resizeChildren()
+
+	return mux
+}
+
+func (mux *Mux) resizeChildren() {
+	rect := mux.bounds.Get()
+	lay := mux.layout.Lay(rect)
+	i := 0
+	for eventsIn := range mux.eventsIns.Elems() {
+		if i > len(lay) {
+			log.Printf("Lay of %T is not large enough (%d) for the number of children, skipping\n",
+				mux.layout, len(lay))
+			break
+		}
+		eventsIn <- gui.Resize{lay[i]}
+		i++
 	}
-	return
 }
 
 type muxEnv struct {
@@ -103,22 +110,10 @@ type muxEnv struct {
 func (m *muxEnv) Events() <-chan gui.Event                      { return m.events }
 func (m *muxEnv) Draw() chan<- func(draw.Image) image.Rectangle { return m.draw }
 
-// We do not store master env
-func (mux *Mux) makeEnv(master bool) (env gui.Env, eventsIn chan<- gui.Event) {
+func makeEnv(muxDraw chan<- func(draw.Image) image.Rectangle) (env gui.Env, eventsIn chan<- gui.Event) {
 	eventsOut, eventsIn := gui.MakeEventsChan()
-	drawChan := make(chan func(draw.Image) image.Rectangle)
-	env = &muxEnv{eventsOut, drawChan}
-
-	if !master {
-		mux.mu.Lock()
-		mux.eventsIns = append(mux.eventsIns, eventsIn)
-		// make sure to always send a resize event to a new Env if we got the size already
-		// that means it missed the resize event by the root Env
-		if mux.lastResize != nil {
-			eventsIn <- mux.lastResize
-		}
-		mux.mu.Unlock()
-	}
+	envDraw := make(chan func(draw.Image) image.Rectangle)
+	env = &muxEnv{eventsOut, envDraw}
 
 	go func() {
 		func() {
@@ -137,35 +132,14 @@ func (mux *Mux) makeEnv(master bool) (env gui.Env, eventsIn chan<- gui.Event) {
 			// commands, correctly draining the Env until it closes itself.
 			defer func() {
 				if recover() != nil {
-					for range drawChan {
+					for range envDraw {
 					}
 				}
 			}()
-			for d := range drawChan {
-				mux.draw <- d // !
+			for d := range envDraw {
+				muxDraw <- d // !
 			}
 		}()
-		if master {
-			mux.mu.Lock()
-			for _, eventsIn := range mux.eventsIns {
-				close(eventsIn)
-			}
-			mux.eventsIns = nil
-			close(mux.draw)
-			mux.mu.Unlock()
-		} else {
-			mux.mu.Lock()
-			i := -1
-			for i = range mux.eventsIns {
-				if mux.eventsIns[i] == eventsIn {
-					break
-				}
-			}
-			if i != -1 {
-				mux.eventsIns = append(mux.eventsIns[:i], mux.eventsIns[i+1:]...)
-			}
-			mux.mu.Unlock()
-		}
 	}()
 
 	return env, eventsIn
