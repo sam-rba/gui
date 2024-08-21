@@ -1,128 +1,200 @@
 package gui
 
 import (
+	"fmt"
 	"image"
 	"image/draw"
 
 	"git.samanthony.xyz/share"
 )
 
-// Mux can be used to multiplex an Env, let's call it a root Env. Mux implements a way to
-// create multiple virtual Envs that all interact with the root Env. They receive the same
-// events and their draw functions get redirected to the root Env.
+// Mux can be used to multiplex an Env, let's call it the parent Env. Mux implements a way to
+// create multiple virtual Envs that all interact with the parent Env. They receive the same
+// events and their draw functions get redirected to the parent Env.
 type Mux struct {
-	addEventsIn chan<- chan<- Event
 	size        share.Val[image.Rectangle]
 	draw        chan<- func(draw.Image) image.Rectangle
+	addChild    chan<- muxEnv
+	removeChild chan<- muxEnv
+	kill        chan<- bool
+	dead        <-chan bool
 }
 
-// NewMux creates a new Mux that multiplexes the given Env. It returns the Mux along with
-// a master Env. The master Env is just like any other Env created by the Mux, except that
-// closing the Draw() channel on the master Env closes the whole Mux and all other Envs
-// created by the Mux.
-func NewMux(env Env) (mux *Mux, master Env) {
-	addEventsIn := make(chan chan<- Event)
+func NewMux(parent Env) Mux {
 	size := share.NewVal[image.Rectangle]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	mux = &Mux{
-		addEventsIn: addEventsIn,
-		size:        size,
-		draw:        drawChan,
-	}
+	addChild := make(chan muxEnv)
+	removeChild := make(chan muxEnv)
+	kill := make(chan bool)
+	dead := make(chan bool)
+
+	detachFromParent := make(chan bool)
 
 	go func() {
-		var eventsIns []chan<- Event
-
-		defer close(env.Draw())
-		defer close(addEventsIn)
-		defer size.Close()
 		defer func() {
-			for _, eventsIn := range eventsIns {
-				close(eventsIn)
+			dead <- true
+			close(dead)
+		}()
+		defer func() {
+			detachFromParent <- true
+			close(detachFromParent)
+		}()
+		defer close(kill)
+		defer close(removeChild)
+		defer close(addChild)
+		defer close(drawChan)
+		defer size.Close()
+
+		var children []muxEnv
+		defer func() {
+			go drain(drawChan) // children may still be sending
+			for _, child := range children {
+				child.kill <- true
+			}
+			for range children {
+				<-removeChild
 			}
 		}()
 
 		for {
 			select {
-			case d, ok := <-drawChan:
-				if !ok { // closed by master env
-					return
-				}
-				env.Draw() <- d
-			case e, ok := <-env.Events():
-				if !ok {
-					return
-				}
+			case d := <-drawChan:
+				parent.Draw() <- d
+			case e := <-parent.Events():
 				if resize, ok := e.(Resize); ok {
 					size.Set <- resize.Rectangle
 				}
-				for _, eventsIn := range eventsIns {
-					eventsIn <- e
+				for _, child := range children {
+					child.eventsIn <- e
 				}
-			case eventsIn := <-addEventsIn:
-				eventsIns = append(eventsIns, eventsIn)
+			case child := <-addChild:
+				children = append(children, child)
+			case child := <-removeChild:
+				var err error
+				// TODO: faster search
+				if children, err = remove(child, children); err != nil {
+					panic(fmt.Sprintf("Mux: failed to remove child Env: %v", err))
+				}
+			case <-kill:
+				return
 			}
 		}
 	}()
 
-	master = mux.makeEnv(true)
-	return mux, master
+	mux := Mux{
+		size:        size,
+		draw:        drawChan,
+		addChild:    addChild,
+		removeChild: removeChild,
+		kill:        kill,
+		dead:        dead,
+	}
+	parent.attach() <- attachMsg{mux, detachFromParent}
+	return mux
 }
 
-// MakeEnv creates a new virtual Env that interacts with the root Env of the Mux. Closing
-// the Draw() channel of the Env will not close the Mux, or any other Env created by the Mux
-// but will delete the Env from the Mux.
-func (mux *Mux) MakeEnv() Env {
-	return mux.makeEnv(false)
+func (mux Mux) Kill() chan<- bool {
+	return mux.kill
+}
+
+func (mux Mux) Dead() <-chan bool {
+	return mux.dead
 }
 
 type muxEnv struct {
-	events <-chan Event
-	draw   chan<- func(draw.Image) image.Rectangle
+	eventsIn   chan<- Event
+	eventsOut  <-chan Event
+	draw       chan<- func(draw.Image) image.Rectangle
+	attachChan chan<- attachMsg
+	kill       chan<- bool
+	dead       <-chan bool
 }
 
-func (m *muxEnv) Events() <-chan Event                          { return m.events }
-func (m *muxEnv) Draw() chan<- func(draw.Image) image.Rectangle { return m.draw }
-
-func (mux *Mux) makeEnv(master bool) Env {
+func (mux Mux) MakeEnv() Env {
 	eventsOut, eventsIn := MakeEventsChan()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	env := &muxEnv{eventsOut, drawChan}
+	victimChan := make(chan Killable)
+	kill := make(chan bool)
+	dead := make(chan bool)
 
-	mux.addEventsIn <- eventsIn
+	attached := newAttachHandler()
+
+	env := muxEnv{
+		eventsIn:   eventsIn,
+		eventsOut:  eventsOut,
+		draw:       drawChan,
+		attachChan: attached.attach,
+		kill:       kill,
+		dead:       dead,
+	}
+	mux.addChild <- env
 	// make sure to always send a resize event to a new Env
 	eventsIn <- Resize{mux.size.Get()}
 
 	go func() {
-		func() {
-			// When the master Env gets its Draw() channel closed, it closes all the Events()
-			// channels of all the children Envs, and it also closes the internal draw channel
-			// of the Mux. Otherwise, closing the Draw() channel of the master Env wouldn't
-			// close the Env the Mux is muxing. However, some child Envs of the Mux may still
-			// send some drawing commmands before they realize that their Events() channel got
-			// closed.
-			//
-			// That is perfectly fine if their drawing commands simply get ignored. This down here
-			// is a little hacky, but (I hope) perfectly fine solution to the problem.
-			//
-			// When the internal draw channel of the Mux gets closed, the line marked with ! will
-			// cause panic. We recover this panic, then we receive, but ignore all furhter draw
-			// commands, correctly draining the Env until it closes itself.
-			defer func() {
-				if recover() != nil {
-					drain(drawChan)
-				}
-			}()
-			for d := range drawChan {
-				mux.draw <- d // !
-			}
+		defer func() {
+			dead <- true
+			close(dead)
 		}()
-		if master {
-			close(mux.draw)
+		defer close(kill)
+		defer close(victimChan)
+		defer close(drawChan)
+		defer close(eventsIn)
+		// eventsOut closed automatically by MakeEventsChan()
+
+		defer func() {
+			mux.removeChild <- env
+		}()
+
+		defer func() {
+			attached.kill <- true
+			<-attached.dead
+		}()
+		defer func() {
+			go drain(drawChan)
+		}()
+
+		for {
+			select {
+			case d := <-drawChan:
+				mux.draw <- d
+			case <-kill:
+				return
+			}
 		}
 	}()
 
 	return env
+}
+
+func (env muxEnv) Events() <-chan Event {
+	return env.eventsOut
+}
+
+func (env muxEnv) Draw() chan<- func(draw.Image) image.Rectangle {
+	return env.draw
+}
+
+func (env muxEnv) Kill() chan<- bool {
+	return env.kill
+}
+
+func (env muxEnv) Dead() <-chan bool {
+	return env.dead
+}
+
+func (env muxEnv) attach() chan<- attachMsg {
+	return env.attachChan
+}
+
+// remove removes element e from slice s, returning the modified slice, or error if e is not in s.
+func remove[S ~[]E, E comparable](e E, s S) ([]E, error) {
+	for i := range s {
+		if s[i] == e {
+			return append(s[:i], s[i+1:]...), nil
+		}
+	}
+	return s, fmt.Errorf("%v not found in %v", e, s)
 }
 
 func drain[T any](c <-chan T) {
