@@ -18,6 +18,7 @@ type Mux struct {
 	removeChild chan<- muxEnv
 	kill        chan<- bool
 	dead        <-chan bool
+	detachChan  <-chan bool
 }
 
 func NewMux(parent Env) Mux {
@@ -88,8 +89,9 @@ func NewMux(parent Env) Mux {
 		removeChild: removeChild,
 		kill:        kill,
 		dead:        dead,
+		detachChan:  detachFromParent,
 	}
-	parent.attach() <- attachMsg{mux, detachFromParent}
+	parent.attach() <- mux
 	return mux
 }
 
@@ -101,31 +103,36 @@ func (mux Mux) Dead() <-chan bool {
 	return mux.dead
 }
 
+func (mux Mux) detach() <-chan bool {
+	return mux.detachChan
+}
+
 type muxEnv struct {
-	eventsIn   chan<- Event
-	eventsOut  <-chan Event
-	draw       chan<- func(draw.Image) image.Rectangle
-	attachChan chan<- attachMsg
-	kill       chan<- bool
-	dead       <-chan bool
+	eventsIn      chan<- Event
+	eventsOut     <-chan Event
+	draw          chan<- func(draw.Image) image.Rectangle
+	attachChan    chan<- attachable
+	kill          chan<- bool
+	dead          <-chan bool
+	detachFromMux <-chan bool
 }
 
 func (mux Mux) MakeEnv() Env {
 	eventsOut, eventsIn := MakeEventsChan()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	victimChan := make(chan Killable)
+	attached := newAttachHandler()
 	kill := make(chan bool)
 	dead := make(chan bool)
-
-	attached := newAttachHandler()
+	detachFromMux := make(chan bool)
 
 	env := muxEnv{
-		eventsIn:   eventsIn,
-		eventsOut:  eventsOut,
-		draw:       drawChan,
-		attachChan: attached.attach,
-		kill:       kill,
-		dead:       dead,
+		eventsIn:      eventsIn,
+		eventsOut:     eventsOut,
+		draw:          drawChan,
+		attachChan:    attached.attach,
+		kill:          kill,
+		dead:          dead,
+		detachFromMux: detachFromMux,
 	}
 	mux.addChild <- env
 	// make sure to always send a resize event to a new Env
@@ -137,7 +144,6 @@ func (mux Mux) MakeEnv() Env {
 			close(dead)
 		}()
 		defer close(kill)
-		defer close(victimChan)
 		defer close(drawChan)
 		defer close(eventsIn)
 		// eventsOut closed automatically by MakeEventsChan()
@@ -183,7 +189,7 @@ func (env muxEnv) Dead() <-chan bool {
 	return env.dead
 }
 
-func (env muxEnv) attach() chan<- attachMsg {
+func (env muxEnv) attach() chan<- attachable {
 	return env.attachChan
 }
 

@@ -7,21 +7,20 @@ type Killable interface {
 	Dead() <-chan bool
 }
 
-// A killer can kill the object that is attached to it.
-// The victim can attach itself to the killer by sending an attachMsg via the provided attach() channel.
-// The attachMsg contains the victim itself and a `detach' channel.
-// The victim can detatch itself from the killer by signalling over the `detach' channel.
+type attachable interface {
+	Killable
+	// Sending to detach() will detach the object from the killer it is attached to.
+	detach() <-chan bool
+}
+
+// A killer can kill the `victim' that is attached to it.
+// The victim can attach itself to the killer by sending itself via the killer's attach() channel.
+// The victim can detach itself by sending a signal via its own detach() channel.
 //
 // Only one victim can be attached to the killer at a time.
 // Further messages sent on the attach() channel will block until the current victim is detached.
 type killer interface {
-	attach() chan<- attachMsg
-}
-
-// attachMsg is sent to a killer to attach the victim.
-type attachMsg struct {
-	victim Killable
-	detach <-chan bool
+	attach() chan<- attachable
 }
 
 // attachHandler implements killer. It allows victims to attach themselves via the attach channel.
@@ -29,13 +28,13 @@ type attachMsg struct {
 // If attachHandler is killed while a victim is attached, it kills the victim.
 // When killed, the victim must detach itself before dying.
 type attachHandler struct {
-	attach chan<- attachMsg
+	attach chan<- attachable
 	kill   chan<- bool
 	dead   <-chan bool
 }
 
 func newAttachHandler() attachHandler {
-	attach := make(chan attachMsg)
+	attach := make(chan attachable)
 	kill := make(chan bool)
 	dead := make(chan bool)
 
@@ -48,25 +47,18 @@ func newAttachHandler() attachHandler {
 		defer close(attach)
 
 		for {
-			var attached attachMsg
-
 			select {
-			case attached = <-attach:
-			case <-kill:
-				return
-			}
-
-		Attached:
-			for {
+			case victim := <-attach:
 				select {
-				case <-attached.detach:
-					break Attached
+				case <-victim.detach():
 				case <-kill:
-					attached.victim.Kill() <- true
-					<-attached.detach
-					<-attached.victim.Dead()
+					victim.Kill() <- true
+					<-victim.detach()
+					<-victim.Dead()
 					return
 				}
+			case <-kill:
+				return
 			}
 		}
 	}()

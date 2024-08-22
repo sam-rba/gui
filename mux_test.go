@@ -152,7 +152,7 @@ type dummyEnv struct {
 	kill chan<- bool
 	dead <-chan bool
 
-	attachChan chan<- attachMsg
+	attachChan chan<- attachable
 }
 
 func newDummyEnv(size image.Rectangle) dummyEnv {
@@ -212,7 +212,7 @@ func (de dummyEnv) Dead() <-chan bool {
 	return de.dead
 }
 
-func (de dummyEnv) attach() chan<- attachMsg {
+func (de dummyEnv) attach() chan<- attachable {
 	return de.attachChan
 }
 
