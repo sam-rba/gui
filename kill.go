@@ -7,12 +7,6 @@ type Killable interface {
 	Dead() <-chan bool
 }
 
-type attachable interface {
-	Killable
-	// Sending to detach() will detach the object from the killer it is attached to.
-	detach() <-chan bool
-}
-
 // A killer can kill the `victim' that is attached to it.
 // The victim can attach itself to the killer by sending itself via the killer's attach() channel.
 // The victim can detach itself by sending a signal via its own detach() channel.
@@ -21,6 +15,12 @@ type attachable interface {
 // Further messages sent on the attach() channel will block until the current victim is detached.
 type killer interface {
 	attach() chan<- attachable
+}
+
+type attachable interface {
+	Killable
+	// Sending to detach() will detach the object from the killer it is attached to.
+	detach() <-chan bool
 }
 
 // attachHandler implements killer. It allows victims to attach themselves via the attach channel.
