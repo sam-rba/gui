@@ -11,8 +11,6 @@ import (
 	"github.com/fogleman/gg"
 )
 
-const timeout = 1 * time.Second
-
 // Send Events from the Mux to the Envs..
 func TestMuxEvent(t *testing.T) {
 	rect := image.Rect(12, 34, 56, 78)
@@ -193,7 +191,7 @@ func newDummyEnv(size image.Rectangle) dummyEnv {
 
 	eventsIn <- Resize{size}
 
-	return dummyEnv{eventsIn, eventsOut, drawIn, drawOut, kill, dead, attached.attach}
+	return dummyEnv{eventsIn, eventsOut, drawIn, drawOut, kill, dead, attached.attach()}
 }
 
 func (de dummyEnv) Events() <-chan Event {

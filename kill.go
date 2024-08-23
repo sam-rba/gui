@@ -28,9 +28,9 @@ type attachable interface {
 // If attachHandler is killed while a victim is attached, it kills the victim.
 // When killed, the victim must detach itself before dying.
 type attachHandler struct {
-	attach chan<- attachable
-	kill   chan<- bool
-	dead   <-chan bool
+	attachChan chan<- attachable
+	kill       chan<- bool
+	dead       <-chan bool
 }
 
 func newAttachHandler() attachHandler {
@@ -64,4 +64,8 @@ func newAttachHandler() attachHandler {
 	}()
 
 	return attachHandler{attach, kill, dead}
+}
+
+func (ah attachHandler) attach() chan<- attachable {
+	return ah.attachChan
 }

@@ -129,7 +129,7 @@ func (mux Mux) MakeEnv() Env {
 		eventsIn:      eventsIn,
 		eventsOut:     eventsOut,
 		draw:          drawChan,
-		attachChan:    attached.attach,
+		attachChan:    attached.attach(),
 		kill:          kill,
 		dead:          dead,
 		detachFromMux: detachFromMux,
