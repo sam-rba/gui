@@ -25,7 +25,7 @@ func TestMuxEvent(t *testing.T) {
 	events := []Event{Resize{rect}, dummyEvent{"fooEvent"}, dummyEvent{"barEvent"}, dummyEvent{"bazEvent"}}
 	go func() {
 		for _, event := range events[1:] { // skip resize—it's sent automatically by the root Env
-			root.eventsIn <- event
+			root.events.Enqueue <- event
 		}
 	}()
 

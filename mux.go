@@ -66,7 +66,7 @@ func NewMux(parent Env) Mux {
 					size.Set <- resize.Rectangle
 				}
 				for _, child := range children {
-					child.eventsIn <- e
+					child.events.Enqueue <- e
 				}
 			case child := <-addChild:
 				children = append(children, child)
@@ -108,8 +108,7 @@ func (mux Mux) detach() <-chan bool {
 }
 
 type muxEnv struct {
-	eventsIn      chan<- Event
-	eventsOut     <-chan Event
+	events        share.Queue[Event]
 	draw          chan<- func(draw.Image) image.Rectangle
 	attachChan    chan<- attachable
 	kill          chan<- bool
@@ -118,7 +117,7 @@ type muxEnv struct {
 }
 
 func (mux Mux) MakeEnv() Env {
-	eventsOut, eventsIn := makeEventsChan()
+	events := share.NewQueue[Event]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	attached := newAttachHandler()
 	kill := make(chan bool)
@@ -126,8 +125,7 @@ func (mux Mux) MakeEnv() Env {
 	detachFromMux := make(chan bool)
 
 	env := muxEnv{
-		eventsIn:      eventsIn,
-		eventsOut:     eventsOut,
+		events:        events,
 		draw:          drawChan,
 		attachChan:    attached.attach(),
 		kill:          kill,
@@ -136,7 +134,7 @@ func (mux Mux) MakeEnv() Env {
 	}
 	mux.addChild <- env
 	// make sure to always send a resize event to a new Env
-	eventsIn <- Resize{mux.size.Get()}
+	events.Enqueue <- Resize{mux.size.Get()}
 
 	go func() {
 		defer func() {
@@ -145,8 +143,7 @@ func (mux Mux) MakeEnv() Env {
 		}()
 		defer close(kill)
 		defer close(drawChan)
-		defer close(eventsIn)
-		// eventsOut closed automatically by makeEventsChan()
+		defer close(events.Enqueue)
 
 		defer func() {
 			mux.removeChild <- env
@@ -174,7 +171,7 @@ func (mux Mux) MakeEnv() Env {
 }
 
 func (env muxEnv) Events() <-chan Event {
-	return env.eventsOut
+	return env.events.Dequeue
 }
 
 func (env muxEnv) Draw() chan<- func(draw.Image) image.Rectangle {

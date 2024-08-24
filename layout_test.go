@@ -33,7 +33,7 @@ func TestSniffer(t *testing.T) {
 		// Send events to sniffer.
 		events := []Event{dummyEvent{"barEvent"}, dummyEvent{"fooEvent"}}
 		for _, event := range events {
-			root.eventsIn <- event
+			root.events.Enqueue <- event
 
 			eventp, ok := tryRecv(sniffer.Events(), timeout)
 			if !ok {
@@ -91,6 +91,6 @@ func TestResizer(t *testing.T) {
 		}
 
 		// this event should be replaced by the resizer
-		root.eventsIn <- Resize{image.Rectangle{}}
+		root.events.Enqueue <- Resize{image.Rectangle{}}
 	}
 }

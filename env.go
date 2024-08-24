@@ -3,6 +3,8 @@ package gui
 import (
 	"image"
 	"image/draw"
+
+	"git.samanthony.xyz/share"
 )
 
 // Env is the most important thing in this package. It is an interactive graphical
@@ -15,7 +17,7 @@ import (
 //
 // An Env guarantees to produce a "resize/<x0>/<y0>/<x1>/<y1>" event as its first event.
 //
-// The Events() channel must be unlimited in capacity. Use makeEventsChan() to create
+// The Events() channel must be unlimited in capacity. Use share.Queue to create
 // a channel of events with an unlimited capacity.
 //
 // The Draw() channel may be synchronous.
@@ -53,7 +55,7 @@ func newEnv(parent Env,
 	filterDraws func(func(draw.Image) image.Rectangle, chan<- func(draw.Image) image.Rectangle),
 	shutdown func(),
 ) Env {
-	eventsOut, eventsIn := makeEventsChan()
+	events := share.NewQueue[Event]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	child := newAttachHandler()
 	kill := make(chan bool)
@@ -70,7 +72,7 @@ func newEnv(parent Env,
 			close(detachFromParent)
 		}()
 		defer shutdown()
-		defer close(eventsIn)
+		defer close(events.Enqueue)
 		defer close(drawChan)
 		defer close(kill)
 		defer func() {
@@ -82,7 +84,7 @@ func newEnv(parent Env,
 		for {
 			select {
 			case e := <-parent.Events():
-				filterEvents(e, eventsIn)
+				filterEvents(e, events.Enqueue)
 			case d := <-drawChan:
 				filterDraws(d, parent.Draw())
 			case <-kill:
@@ -92,7 +94,7 @@ func newEnv(parent Env,
 	}()
 
 	e := env{
-		events:     eventsOut,
+		events:     events.Dequeue,
 		draw:       drawChan,
 		attachChan: child.attach(),
 		kill:       kill,

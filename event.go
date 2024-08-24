@@ -23,52 +23,6 @@ func (r Resize) String() string {
 	return fmt.Sprintf("resize/%d/%d/%d/%d", r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
 }
 
-// makeEventsChan implements a channel of events with an unlimited capacity. It does so
-// by creating a goroutine that queues incoming events. Sending to this channel never blocks
-// and no events get lost.
-//
-// The unlimited capacity channel is very suitable for delivering events because the consumer
-// may be unavailable for some time (doing a heavy computation), but will get to the events
-// later.
-//
-// An unlimited capacity channel has its dangers in general, but is completely fine for
-// the purpose of delivering events. This is because the production of events is fairly
-// infrequent and should never out-run their consumption in the long term.
-func makeEventsChan() (<-chan Event, chan<- Event) {
-	out, in := make(chan Event), make(chan Event)
-
-	go func() {
-		var queue []Event
-
-		for {
-			x, ok := <-in
-			if !ok {
-				close(out)
-				return
-			}
-			queue = append(queue, x)
-
-			for len(queue) > 0 {
-				select {
-				case out <- queue[0]:
-					queue = queue[1:]
-				case x, ok := <-in:
-					if !ok {
-						for _, x := range queue {
-							out <- x
-						}
-						close(out)
-						return
-					}
-					queue = append(queue, x)
-				}
-			}
-		}
-	}()
-
-	return out, in
-}
-
 // Button indicates a mouse button in an event.
 type Button string
 

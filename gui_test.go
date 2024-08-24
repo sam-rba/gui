@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/draw"
 	"time"
+
+	"git.samanthony.xyz/share"
 )
 
 const timeout = 1 * time.Second
@@ -31,8 +33,7 @@ func tryRecv[T any](c <-chan T, timeout time.Duration) (*T, bool) {
 }
 
 type dummyEnv struct {
-	eventsIn  chan<- Event
-	eventsOut <-chan Event
+	events share.Queue[Event]
 
 	drawIn  chan<- func(draw.Image) image.Rectangle
 	drawOut <-chan func(draw.Image) image.Rectangle
@@ -44,7 +45,7 @@ type dummyEnv struct {
 }
 
 func newDummyEnv(size image.Rectangle) dummyEnv {
-	eventsOut, eventsIn := makeEventsChan()
+	events := share.NewQueue[Event]()
 	drawIn := make(chan func(draw.Image) image.Rectangle)
 	drawOut := make(chan func(draw.Image) image.Rectangle)
 	kill := make(chan bool)
@@ -60,7 +61,7 @@ func newDummyEnv(size image.Rectangle) dummyEnv {
 		defer close(kill)
 		defer close(drawOut)
 		defer close(drawIn)
-		defer close(eventsIn)
+		defer close(events.Enqueue)
 		defer func() {
 			go drain(drawIn)
 			attached.kill <- true
@@ -77,13 +78,13 @@ func newDummyEnv(size image.Rectangle) dummyEnv {
 		}
 	}()
 
-	eventsIn <- Resize{size}
+	events.Enqueue <- Resize{size}
 
-	return dummyEnv{eventsIn, eventsOut, drawIn, drawOut, kill, dead, attached.attach()}
+	return dummyEnv{events, drawIn, drawOut, kill, dead, attached.attach()}
 }
 
 func (de dummyEnv) Events() <-chan Event {
-	return de.eventsOut
+	return de.events.Dequeue
 }
 
 func (de dummyEnv) Draw() chan<- func(draw.Image) image.Rectangle {

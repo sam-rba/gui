@@ -7,6 +7,7 @@ import (
 	"time"
 	"unsafe"
 
+	"git.samanthony.xyz/share"
 	"github.com/faiface/mainthread"
 	"github.com/go-gl/gl/v2.1/gl"
 	"github.com/go-gl/glfw/v3.2/glfw"
@@ -75,14 +76,13 @@ func New(opts ...Option) (*Win, error) {
 		opt(&o)
 	}
 
-	eventsOut, eventsIn := makeEventsChan()
+	events := share.NewQueue[Event]()
 
 	w := &Win{
-		eventsOut: eventsOut,
-		eventsIn:  eventsIn,
-		draw:      make(chan func(draw.Image) image.Rectangle),
-		newSize:   make(chan image.Rectangle),
-		finish:    make(chan struct{}),
+		events:  events,
+		draw:    make(chan func(draw.Image) image.Rectangle),
+		newSize: make(chan image.Rectangle),
+		finish:  make(chan struct{}),
 	}
 
 	var err error
@@ -157,9 +157,8 @@ func makeGLFWWin(o *options) (*glfw.Window, error) {
 //
 // Warning: only one window can be open at a time. This will be fixed.
 type Win struct {
-	eventsOut <-chan Event
-	eventsIn  chan<- Event
-	draw      chan func(draw.Image) image.Rectangle
+	events share.Queue[Event]
+	draw   chan func(draw.Image) image.Rectangle
 
 	newSize chan image.Rectangle
 	finish  chan struct{}
@@ -170,7 +169,7 @@ type Win struct {
 }
 
 // Events returns the events channel of the window.
-func (w *Win) Events() <-chan Event { return w.eventsOut }
+func (w *Win) Events() <-chan Event { return w.events.Dequeue }
 
 // Draw returns the draw channel of the window.
 func (w *Win) Draw() chan<- func(draw.Image) image.Rectangle { return w.draw }
@@ -209,7 +208,7 @@ func (w *Win) eventThread() {
 
 	w.w.SetCursorPosCallback(func(_ *glfw.Window, x, y float64) {
 		moX, moY = int(x), int(y)
-		w.eventsIn <- MoMove{image.Pt(moX*w.ratio, moY*w.ratio)}
+		w.events.Enqueue <- MoMove{image.Pt(moX*w.ratio, moY*w.ratio)}
 	})
 
 	w.w.SetMouseButtonCallback(func(_ *glfw.Window, button glfw.MouseButton, action glfw.Action, mod glfw.ModifierKey) {
@@ -219,18 +218,18 @@ func (w *Win) eventThread() {
 		}
 		switch action {
 		case glfw.Press:
-			w.eventsIn <- MoDown{image.Pt(moX*w.ratio, moY*w.ratio), b}
+			w.events.Enqueue <- MoDown{image.Pt(moX*w.ratio, moY*w.ratio), b}
 		case glfw.Release:
-			w.eventsIn <- MoUp{image.Pt(moX*w.ratio, moY*w.ratio), b}
+			w.events.Enqueue <- MoUp{image.Pt(moX*w.ratio, moY*w.ratio), b}
 		}
 	})
 
 	w.w.SetScrollCallback(func(_ *glfw.Window, xoff, yoff float64) {
-		w.eventsIn <- MoScroll{image.Pt(int(xoff), int(yoff))}
+		w.events.Enqueue <- MoScroll{image.Pt(int(xoff), int(yoff))}
 	})
 
 	w.w.SetCharCallback(func(_ *glfw.Window, r rune) {
-		w.eventsIn <- KbType{r}
+		w.events.Enqueue <- KbType{r}
 	})
 
 	w.w.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, _ int, action glfw.Action, _ glfw.ModifierKey) {
@@ -240,31 +239,31 @@ func (w *Win) eventThread() {
 		}
 		switch action {
 		case glfw.Press:
-			w.eventsIn <- KbDown{k}
+			w.events.Enqueue <- KbDown{k}
 		case glfw.Release:
-			w.eventsIn <- KbUp{k}
+			w.events.Enqueue <- KbUp{k}
 		case glfw.Repeat:
-			w.eventsIn <- KbRepeat{k}
+			w.events.Enqueue <- KbRepeat{k}
 		}
 	})
 
 	w.w.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		r := image.Rect(0, 0, width, height)
 		w.newSize <- r
-		w.eventsIn <- Resize{Rectangle: r}
+		w.events.Enqueue <- Resize{Rectangle: r}
 	})
 
 	w.w.SetCloseCallback(func(_ *glfw.Window) {
-		w.eventsIn <- WiClose{}
+		w.events.Enqueue <- WiClose{}
 	})
 
 	r := w.img.Bounds()
-	w.eventsIn <- Resize{Rectangle: r}
+	w.events.Enqueue <- Resize{Rectangle: r}
 
 	for {
 		select {
 		case <-w.finish:
-			close(w.eventsIn)
+			close(w.events.Enqueue)
 			w.w.Destroy()
 			return
 		default:
