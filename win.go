@@ -1,4 +1,4 @@
-package win
+package gui
 
 import (
 	"image"
@@ -7,7 +7,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/faiface/gui"
 	"github.com/faiface/mainthread"
 	"github.com/go-gl/gl/v2.1/gl"
 	"github.com/go-gl/glfw/v3.2/glfw"
@@ -76,7 +75,7 @@ func New(opts ...Option) (*Win, error) {
 		opt(&o)
 	}
 
-	eventsOut, eventsIn := gui.MakeEventsChan()
+	eventsOut, eventsIn := makeEventsChan()
 
 	w := &Win{
 		eventsOut: eventsOut,
@@ -158,8 +157,8 @@ func makeGLFWWin(o *options) (*glfw.Window, error) {
 //
 // Warning: only one window can be open at a time. This will be fixed.
 type Win struct {
-	eventsOut <-chan gui.Event
-	eventsIn  chan<- gui.Event
+	eventsOut <-chan Event
+	eventsIn  chan<- Event
 	draw      chan func(draw.Image) image.Rectangle
 
 	newSize chan image.Rectangle
@@ -171,7 +170,7 @@ type Win struct {
 }
 
 // Events returns the events channel of the window.
-func (w *Win) Events() <-chan gui.Event { return w.eventsOut }
+func (w *Win) Events() <-chan Event { return w.eventsOut }
 
 // Draw returns the draw channel of the window.
 func (w *Win) Draw() chan<- func(draw.Image) image.Rectangle { return w.draw }
@@ -252,7 +251,7 @@ func (w *Win) eventThread() {
 	w.w.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		r := image.Rect(0, 0, width, height)
 		w.newSize <- r
-		w.eventsIn <- gui.Resize{Rectangle: r}
+		w.eventsIn <- Resize{Rectangle: r}
 	})
 
 	w.w.SetCloseCallback(func(_ *glfw.Window) {
@@ -260,7 +259,7 @@ func (w *Win) eventThread() {
 	})
 
 	r := w.img.Bounds()
-	w.eventsIn <- gui.Resize{Rectangle: r}
+	w.eventsIn <- Resize{Rectangle: r}
 
 	for {
 		select {
