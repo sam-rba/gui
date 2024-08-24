@@ -1,15 +1,13 @@
-package layout
+package gui
 
 import (
 	"image"
 	"image/color"
 	"image/draw"
 	"log"
-
-	"github.com/faiface/gui"
 )
 
-var _ Layout = Grid{}
+var _ Scheme = Grid{}
 
 // Grid represents a grid with rows and columns in each row.
 // Each row can be a different length.
@@ -50,11 +48,11 @@ func (g Grid) redraw(drw draw.Image, bounds image.Rectangle) {
 	draw.Draw(drw, bounds.Inset(g.Border), image.NewUniform(col), image.ZP, draw.Src)
 }
 
-func (g Grid) Intercept(env gui.Env) gui.Env {
+func (g Grid) Intercept(env Env) Env {
 	return RedrawIntercepter{g.redraw}.Intercept(env)
 }
 
-func (g Grid) Lay(bounds image.Rectangle) []image.Rectangle {
+func (g Grid) Partition(bounds image.Rectangle) []image.Rectangle {
 	gap := g.Gap
 	rows := g.Rows
 	splitMain := g.Split
