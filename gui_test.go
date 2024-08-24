@@ -1,6 +1,10 @@
 package gui
 
-import "time"
+import (
+	"image"
+	"image/draw"
+	"time"
+)
 
 const timeout = 1 * time.Second
 
@@ -24,4 +28,84 @@ func tryRecv[T any](c <-chan T, timeout time.Duration) (*T, bool) {
 	case <-timer.C:
 		return nil, false
 	}
+}
+
+type dummyEnv struct {
+	eventsIn  chan<- Event
+	eventsOut <-chan Event
+
+	drawIn  chan<- func(draw.Image) image.Rectangle
+	drawOut <-chan func(draw.Image) image.Rectangle
+
+	kill chan<- bool
+	dead <-chan bool
+
+	attachChan chan<- attachable
+}
+
+func newDummyEnv(size image.Rectangle) dummyEnv {
+	eventsOut, eventsIn := makeEventsChan()
+	drawIn := make(chan func(draw.Image) image.Rectangle)
+	drawOut := make(chan func(draw.Image) image.Rectangle)
+	kill := make(chan bool)
+	dead := make(chan bool)
+
+	attached := newAttachHandler()
+
+	go func() {
+		defer func() {
+			dead <- true
+			close(dead)
+		}()
+		defer close(kill)
+		defer close(drawOut)
+		defer close(drawIn)
+		defer close(eventsIn)
+		defer func() {
+			go drain(drawIn)
+			attached.kill <- true
+			<-attached.dead
+		}()
+
+		for {
+			select {
+			case d := <-drawIn:
+				drawOut <- d
+			case <-kill:
+				return
+			}
+		}
+	}()
+
+	eventsIn <- Resize{size}
+
+	return dummyEnv{eventsIn, eventsOut, drawIn, drawOut, kill, dead, attached.attach()}
+}
+
+func (de dummyEnv) Events() <-chan Event {
+	return de.eventsOut
+}
+
+func (de dummyEnv) Draw() chan<- func(draw.Image) image.Rectangle {
+	return de.drawIn
+}
+
+func (de dummyEnv) Kill() chan<- bool {
+	return de.kill
+}
+
+func (de dummyEnv) Dead() <-chan bool {
+	return de.dead
+}
+
+func (de dummyEnv) attach() chan<- attachable {
+	return de.attachChan
+}
+
+type dummyEvent struct {
+	s string
+}
+
+func (e dummyEvent) String() string {
+	return e.s
 }
