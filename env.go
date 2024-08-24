@@ -15,7 +15,7 @@ import (
 //
 // An Env guarantees to produce a "resize/<x0>/<y0>/<x1>/<y1>" event as its first event.
 //
-// The Events() channel must be unlimited in capacity. Use MakeEventsChan() to create
+// The Events() channel must be unlimited in capacity. Use makeEventsChan() to create
 // a channel of events with an unlimited capacity.
 //
 // The Draw() channel may be synchronous.

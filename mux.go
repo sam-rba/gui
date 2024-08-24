@@ -118,7 +118,7 @@ type muxEnv struct {
 }
 
 func (mux Mux) MakeEnv() Env {
-	eventsOut, eventsIn := MakeEventsChan()
+	eventsOut, eventsIn := makeEventsChan()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
 	attached := newAttachHandler()
 	kill := make(chan bool)
@@ -146,7 +146,7 @@ func (mux Mux) MakeEnv() Env {
 		defer close(kill)
 		defer close(drawChan)
 		defer close(eventsIn)
-		// eventsOut closed automatically by MakeEventsChan()
+		// eventsOut closed automatically by makeEventsChan()
 
 		defer func() {
 			mux.removeChild <- env

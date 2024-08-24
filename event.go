@@ -23,7 +23,7 @@ func (r Resize) String() string {
 	return fmt.Sprintf("resize/%d/%d/%d/%d", r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
 }
 
-// MakeEventsChan implements a channel of events with an unlimited capacity. It does so
+// makeEventsChan implements a channel of events with an unlimited capacity. It does so
 // by creating a goroutine that queues incoming events. Sending to this channel never blocks
 // and no events get lost.
 //
@@ -34,7 +34,7 @@ func (r Resize) String() string {
 // An unlimited capacity channel has its dangers in general, but is completely fine for
 // the purpose of delivering events. This is because the production of events is fairly
 // infrequent and should never out-run their consumption in the long term.
-func MakeEventsChan() (<-chan Event, chan<- Event) {
+func makeEventsChan() (<-chan Event, chan<- Event) {
 	out, in := make(chan Event), make(chan Event)
 
 	go func() {
