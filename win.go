@@ -13,10 +13,10 @@ import (
 	"github.com/go-gl/glfw/v3.2/glfw"
 )
 
-// Option is a functional option to the window constructor New.
-type Option func(*options)
+// WinOption is a functional option to the window constructor.
+type WinOption func(*winOptions)
 
-type options struct {
+type winOptions struct {
 	title         string
 	width, height int
 	resizable     bool
@@ -25,46 +25,63 @@ type options struct {
 }
 
 // Title option sets the title (caption) of the window.
-func Title(title string) Option {
-	return func(o *options) {
+func Title(title string) WinOption {
+	return func(o *winOptions) {
 		o.title = title
 	}
 }
 
 // Size option sets the width and height of the window.
-func Size(width, height int) Option {
-	return func(o *options) {
+func Size(width, height int) WinOption {
+	return func(o *winOptions) {
 		o.width = width
 		o.height = height
 	}
 }
 
 // Resizable option makes the window resizable by the user.
-func Resizable() Option {
-	return func(o *options) {
+func Resizable() WinOption {
+	return func(o *winOptions) {
 		o.resizable = true
 	}
 }
 
 // Borderless option makes the window borderless.
-func Borderless() Option {
-	return func(o *options) {
+func Borderless() WinOption {
+	return func(o *winOptions) {
 		o.borderless = true
 	}
 }
 
 // Maximized option makes the window start maximized.
-func Maximized() Option {
-	return func(o *options) {
+func Maximized() WinOption {
+	return func(o *winOptions) {
 		o.maximized = true
 	}
 }
 
-// New creates a new window with all the supplied options.
+// Win is an Env that handles an actual graphical window.
+//
+// It receives its events from the OS and it draws to the surface of the window.
+//
+// Warning: only one window can be open at a time. This will be fixed.
+type Win struct {
+	events share.Queue[Event]
+	draw   chan func(draw.Image) image.Rectangle
+
+	newSize chan image.Rectangle
+	finish  chan struct{}
+
+	w     *glfw.Window
+	img   *image.RGBA
+	ratio int
+}
+
+// NewWin creates a new window with all the supplied options.
 //
 // The default title is empty and the default size is 640x480.
-func New(opts ...Option) (*Win, error) {
-	o := options{
+func NewWin(opts ...WinOption) (*Win, error) {
+	o := winOptions{
 		title:      "",
 		width:      640,
 		height:     480,
@@ -124,7 +141,7 @@ func New(opts ...Option) (*Win, error) {
 	return w, nil
 }
 
-func makeGLFWWin(o *options) (*glfw.Window, error) {
+func makeGLFWWin(o *winOptions) (*glfw.Window, error) {
 	err := glfw.Init()
 	if err != nil {
 		return nil, err
@@ -149,23 +166,6 @@ func makeGLFWWin(o *options) (*glfw.Window, error) {
 		o.width, o.height = w.GetFramebufferSize() // set o.width and o.height to the window size due to the window being maximized
 	}
 	return w, nil
-}
-
-// Win is an Env that handles an actual graphical window.
-//
-// It receives its events from the OS and it draws to the surface of the window.
-//
-// Warning: only one window can be open at a time. This will be fixed.
-type Win struct {
-	events share.Queue[Event]
-	draw   chan func(draw.Image) image.Rectangle
-
-	newSize chan image.Rectangle
-	finish  chan struct{}
-
-	w     *glfw.Window
-	img   *image.RGBA
-	ratio int
 }
 
 // Events returns the events channel of the window.
