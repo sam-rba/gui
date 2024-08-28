@@ -7,34 +7,36 @@ type Killable interface {
 	Dead() <-chan bool
 }
 
-// A killer can kill the `victim' that is attached to it.
+// A killer can kill the victim that is attached to it.
 // The victim can attach itself to the killer by sending itself via the killer's attach() channel.
 // The victim can detach itself by sending a signal via its own detach() channel.
 //
 // Only one victim can be attached to the killer at a time.
 // Further messages sent on the attach() channel will block until the current victim is detached.
-type killer interface {
-	attach() chan<- attachable
-}
-
-type attachable interface {
-	Killable
-	// Sending to detach() will detach the object from the killer it is attached to.
-	detach() <-chan bool
-}
-
-// attachHandler implements killer. It allows victims to attach themselves via the attach channel.
-// There can only be one attached victim at a time.
-// If attachHandler is killed while a victim is attached, it kills the victim.
+//
+// If the killer is killed while a victim is attached, it kills the victim.
 // When killed, the victim must detach itself before dying.
-type attachHandler struct {
-	attachChan chan<- attachable
+type killer interface {
+	attach() chan<- victim
+
+	Killable
+}
+
+type victim interface {
+	// Sending to detach() will detach the victim from the killer it is attached to.
+	detach() <-chan bool
+
+	Killable
+}
+
+type _killer struct {
+	attachChan chan<- victim
 	kill       chan<- bool
 	dead       <-chan bool
 }
 
-func newAttachHandler() attachHandler {
-	attach := make(chan attachable)
+func newKiller() killer {
+	attach := make(chan victim)
 	kill := make(chan bool)
 	dead := make(chan bool)
 
@@ -63,9 +65,17 @@ func newAttachHandler() attachHandler {
 		}
 	}()
 
-	return attachHandler{attach, kill, dead}
+	return _killer{attach, kill, dead}
 }
 
-func (ah attachHandler) attach() chan<- attachable {
-	return ah.attachChan
+func (k _killer) attach() chan<- victim {
+	return k.attachChan
+}
+
+func (k _killer) Kill() chan<- bool {
+	return k.kill
+}
+
+func (k _killer) Dead() <-chan bool {
+	return k.dead
 }

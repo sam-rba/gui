@@ -34,7 +34,7 @@ type Env interface {
 type env struct {
 	events     <-chan Event
 	draw       chan<- func(draw.Image) image.Rectangle
-	attachChan chan<- attachable
+	attachChan chan<- victim
 	kill       chan<- bool
 	dead       <-chan bool
 	detachChan <-chan bool
@@ -57,7 +57,7 @@ func newEnv(parent Env,
 ) Env {
 	events := share.NewQueue[Event]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	child := newAttachHandler()
+	child := newKiller()
 	kill := make(chan bool)
 	dead := make(chan bool)
 	detachFromParent := make(chan bool)
@@ -77,8 +77,8 @@ func newEnv(parent Env,
 		defer close(kill)
 		defer func() {
 			go drain(drawChan)
-			child.kill <- true
-			<-child.dead
+			child.Kill() <- true
+			<-child.Dead()
 		}()
 
 		for {
@@ -121,7 +121,7 @@ func (e env) Dead() <-chan bool {
 	return e.dead
 }
 
-func (e env) attach() chan<- attachable {
+func (e env) attach() chan<- victim {
 	return e.attachChan
 }
 

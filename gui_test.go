@@ -41,7 +41,7 @@ type dummyEnv struct {
 	kill chan<- bool
 	dead <-chan bool
 
-	attachChan chan<- attachable
+	attachChan chan<- victim
 }
 
 func newDummyEnv(size image.Rectangle) dummyEnv {
@@ -51,7 +51,7 @@ func newDummyEnv(size image.Rectangle) dummyEnv {
 	kill := make(chan bool)
 	dead := make(chan bool)
 
-	attached := newAttachHandler()
+	child := newKiller()
 
 	go func() {
 		defer func() {
@@ -64,8 +64,8 @@ func newDummyEnv(size image.Rectangle) dummyEnv {
 		defer close(events.Enqueue)
 		defer func() {
 			go drain(drawIn)
-			attached.kill <- true
-			<-attached.dead
+			child.Kill() <- true
+			<-child.Dead()
 		}()
 
 		for {
@@ -80,7 +80,7 @@ func newDummyEnv(size image.Rectangle) dummyEnv {
 
 	events.Enqueue <- Resize{size}
 
-	return dummyEnv{events, drawIn, drawOut, kill, dead, attached.attach()}
+	return dummyEnv{events, drawIn, drawOut, kill, dead, child.attach()}
 }
 
 func (de dummyEnv) Events() <-chan Event {
@@ -99,7 +99,7 @@ func (de dummyEnv) Dead() <-chan bool {
 	return de.dead
 }
 
-func (de dummyEnv) attach() chan<- attachable {
+func (de dummyEnv) attach() chan<- victim {
 	return de.attachChan
 }
 

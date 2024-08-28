@@ -110,7 +110,7 @@ func (mux Mux) detach() <-chan bool {
 type muxEnv struct {
 	events        share.Queue[Event]
 	draw          chan<- func(draw.Image) image.Rectangle
-	attachChan    chan<- attachable
+	attachChan    chan<- victim
 	kill          chan<- bool
 	dead          <-chan bool
 	detachFromMux <-chan bool
@@ -119,7 +119,7 @@ type muxEnv struct {
 func (mux Mux) MakeEnv() Env {
 	events := share.NewQueue[Event]()
 	drawChan := make(chan func(draw.Image) image.Rectangle)
-	attached := newAttachHandler()
+	child := newKiller()
 	kill := make(chan bool)
 	dead := make(chan bool)
 	detachFromMux := make(chan bool)
@@ -127,7 +127,7 @@ func (mux Mux) MakeEnv() Env {
 	env := muxEnv{
 		events:        events,
 		draw:          drawChan,
-		attachChan:    attached.attach(),
+		attachChan:    child.attach(),
 		kill:          kill,
 		dead:          dead,
 		detachFromMux: detachFromMux,
@@ -150,8 +150,8 @@ func (mux Mux) MakeEnv() Env {
 		}()
 
 		defer func() {
-			attached.kill <- true
-			<-attached.dead
+			child.Kill() <- true
+			<-child.Dead()
 		}()
 		defer func() {
 			go drain(drawChan)
@@ -186,7 +186,7 @@ func (env muxEnv) Dead() <-chan bool {
 	return env.dead
 }
 
-func (env muxEnv) attach() chan<- attachable {
+func (env muxEnv) attach() chan<- victim {
 	return env.attachChan
 }
 

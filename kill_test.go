@@ -5,52 +5,52 @@ import (
 	"testing"
 )
 
-// Kill the attachHandler with no victim attached.
-func TestAttachHandlerKill(t *testing.T) {
-	handler := newAttachHandler()
-	if !trySend(handler.kill, true, timeout) {
-		t.Errorf("kill attachHandler timed out after %v", timeout)
+// Kill the killer with no victim attached.
+func TestKillerKill(t *testing.T) {
+	killer := newKiller()
+	if !trySend(killer.Kill(), true, timeout) {
+		t.Errorf("kill timed out after %v", timeout)
 	}
-	if _, ok := tryRecv(handler.dead, timeout); !ok {
-		t.Errorf("no dead signal from attachHandler after %v", timeout)
+	if _, ok := tryRecv(killer.Dead(), timeout); !ok {
+		t.Errorf("no dead signal from killer after %v", timeout)
 	}
 }
 
-// Kill the attachHandler with a victim attached.
-func TestAttachHandlerAttachKill(t *testing.T) {
-	handler := newAttachHandler()
-	victim, err := newDummyAttachable(handler)
+// Kill the killer with a victim attached.
+func TestKillerAttachKill(t *testing.T) {
+	killer := newKiller()
+	victim, err := newDummyVictim(killer)
 	if err != nil {
 		t.Error(err)
 	}
 
-	// Kill attachHandler.
-	if !trySend(handler.kill, true, timeout) {
-		t.Errorf("failed to kill attachHandler after %v", timeout)
+	// Kill the killer.
+	if !trySend(killer.Kill(), true, timeout) {
+		t.Errorf("failed to kill killer after %v", timeout)
 	}
-	if _, ok := tryRecv(handler.dead, timeout); !ok {
-		t.Errorf("attachHandler not dead after %v", timeout)
+	if _, ok := tryRecv(killer.Dead(), timeout); !ok {
+		t.Errorf("killer not dead after %v", timeout)
 	}
 
 	// victim.Dead() should now be closed.
 	if _, notClosed := <-victim.Dead(); notClosed {
-		t.Errorf("victim not dead after killing attachHandler")
+		t.Errorf("victim not dead after killing killer")
 	}
 }
 
 // Detach the victim and attach another in its place.
-func TestAttachHandlerReattach(t *testing.T) {
-	handler := newAttachHandler()
+func TestKillerReattach(t *testing.T) {
+	killer := newKiller()
 
 	// Attach first victim.
-	victim1, err := newDummyAttachable(handler)
+	victim1, err := newDummyVictim(killer)
 	if err != nil {
 		t.Error(err)
 	}
 
 	// Try to attach second victim while first still attached—should fail.
-	if _, err := newDummyAttachable(handler); err == nil {
-		t.Errorf("attachHandler accepted another victim while the first was still attached.")
+	if _, err := newDummyVictim(killer); err == nil {
+		t.Errorf("killer accepted another victim while the first was still attached.")
 	}
 
 	// Detach first victim.
@@ -62,23 +62,23 @@ func TestAttachHandlerReattach(t *testing.T) {
 	}
 
 	// Attach second victim.
-	if _, err := newDummyAttachable(handler); err != nil {
+	if _, err := newDummyVictim(killer); err != nil {
 		t.Error(err)
 	}
 
-	handler.kill <- true
-	<-handler.dead
+	killer.Kill() <- true
+	<-killer.Dead()
 }
 
-type dummyAttachable struct {
+type dummyVictim struct {
 	kill       chan<- bool
 	dead       <-chan bool
 	detachChan <-chan bool
 }
 
-// newDummyAttachable returns a dummyAttachable that is attached to parent,
+// newDummyVictim returns a victim that is attached to parent,
 // or error if the parent does not accept the attach.
-func newDummyAttachable(parent killer) (attachable, error) {
+func newDummyVictim(parent killer) (victim, error) {
 	kill := make(chan bool)
 	dead := make(chan bool)
 	detachChan := make(chan bool)
@@ -92,21 +92,21 @@ func newDummyAttachable(parent killer) (attachable, error) {
 		close(dead)
 	}()
 
-	da := dummyAttachable{kill, dead, detachChan}
-	if !trySend(parent.attach(), attachable(da), timeout) {
-		return da, fmt.Errorf("failed to attach after %v", timeout)
+	dummy := dummyVictim{kill, dead, detachChan}
+	if !trySend(parent.attach(), victim(dummy), timeout) {
+		return dummy, fmt.Errorf("failed to attach after %v", timeout)
 	}
-	return da, nil
+	return dummy, nil
 }
 
-func (da dummyAttachable) Kill() chan<- bool {
-	return da.kill
+func (dv dummyVictim) Kill() chan<- bool {
+	return dv.kill
 }
 
-func (da dummyAttachable) Dead() <-chan bool {
-	return da.dead
+func (dv dummyVictim) Dead() <-chan bool {
+	return dv.dead
 }
 
-func (da dummyAttachable) detach() <-chan bool {
-	return da.detachChan
+func (dv dummyVictim) detach() <-chan bool {
+	return dv.detachChan
 }
