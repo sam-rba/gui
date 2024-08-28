@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/draw"
 	"runtime"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -69,12 +70,15 @@ type Win struct {
 	events share.Queue[Event]
 	draw   chan func(draw.Image) image.Rectangle
 
+	w       *glfw.Window
 	newSize chan image.Rectangle
-	finish  chan struct{}
+	img     share.Val[*image.RGBA]
+	ratio   int
 
-	w     *glfw.Window
-	img   *image.RGBA
-	ratio int
+	kill chan bool
+	dead chan bool
+
+	threads *sync.WaitGroup
 }
 
 // NewWin creates a new window with all the supplied options.
@@ -99,7 +103,10 @@ func NewWin(opts ...WinOption) (*Win, error) {
 		events:  events,
 		draw:    make(chan func(draw.Image) image.Rectangle),
 		newSize: make(chan image.Rectangle),
-		finish:  make(chan struct{}),
+		img:     share.NewVal[*image.RGBA](),
+		kill:    make(chan bool),
+		dead:    make(chan bool),
+		threads: new(sync.WaitGroup),
 	}
 
 	var err error
@@ -129,7 +136,7 @@ func NewWin(opts ...WinOption) (*Win, error) {
 	}
 
 	bounds := image.Rect(0, 0, o.width*w.ratio, o.height*w.ratio)
-	w.img = image.NewRGBA(bounds)
+	w.img.Set <- image.NewRGBA(bounds)
 
 	go func() {
 		runtime.LockOSThread()
@@ -257,14 +264,23 @@ func (w *Win) eventThread() {
 		w.events.Enqueue <- WiClose{}
 	})
 
-	r := w.img.Bounds()
+	r := w.img.Get().Bounds()
 	w.events.Enqueue <- Resize{Rectangle: r}
 
 	for {
 		select {
-		case <-w.finish:
+		case <-w.kill:
+			close(w.kill)
 			close(w.events.Enqueue)
+			close(w.draw)
+			close(w.newSize)
 			w.w.Destroy()
+
+			w.threads.Wait()
+
+			w.dead <- true
+			close(w.dead)
+
 			return
 		default:
 			glfw.WaitEventsTimeout(1.0 / 30)
@@ -273,28 +289,34 @@ func (w *Win) eventThread() {
 }
 
 func (w *Win) openGLThread() {
+	w.threads.Add(1)
+	defer w.threads.Done()
+
 	w.w.MakeContextCurrent()
 	gl.Init()
 
-	w.openGLFlush(w.img.Bounds())
+	w.openGLFlush(w.img.Get().Bounds())
 
 loop:
 	for {
 		var totalR image.Rectangle
 
 		select {
-		case r := <-w.newSize:
-			img := image.NewRGBA(r)
-			draw.Draw(img, w.img.Bounds(), w.img, w.img.Bounds().Min, draw.Src)
-			w.img = img
+		case r, ok := <-w.newSize:
+			if !ok {
+				return
+			}
+			newImg := image.NewRGBA(r)
+			oldImg := w.img.Get()
+			draw.Draw(newImg, oldImg.Bounds(), oldImg, oldImg.Bounds().Min, draw.Src)
+			w.img.Set <- newImg
 			totalR = totalR.Union(r)
 
 		case d, ok := <-w.draw:
 			if !ok {
-				close(w.finish)
 				return
 			}
-			r := d(w.img)
+			r := d(w.img.Get())
 			totalR = totalR.Union(r)
 		}
 
@@ -305,18 +327,21 @@ loop:
 				totalR = image.ZR
 				continue loop
 
-			case r := <-w.newSize:
-				img := image.NewRGBA(r)
-				draw.Draw(img, w.img.Bounds(), w.img, w.img.Bounds().Min, draw.Src)
-				w.img = img
+			case r, ok := <-w.newSize:
+				if !ok {
+					return
+				}
+				newImg := image.NewRGBA(r)
+				oldImg := w.img.Get()
+				draw.Draw(newImg, oldImg.Bounds(), oldImg, oldImg.Bounds().Min, draw.Src)
+				w.img.Set <- newImg
 				totalR = totalR.Union(r)
 
 			case d, ok := <-w.draw:
 				if !ok {
-					close(w.finish)
 					return
 				}
-				r := d(w.img)
+				r := d(w.img.Get())
 				totalR = totalR.Union(r)
 			}
 		}
@@ -324,14 +349,14 @@ loop:
 }
 
 func (w *Win) openGLFlush(r image.Rectangle) {
-	bounds := w.img.Bounds()
+	bounds := w.img.Get().Bounds()
 	r = r.Intersect(bounds)
 	if r.Empty() {
 		return
 	}
 
 	tmp := image.NewRGBA(r)
-	draw.Draw(tmp, r, w.img, r.Min, draw.Src)
+	draw.Draw(tmp, r, w.img.Get(), r.Min, draw.Src)
 
 	gl.DrawBuffer(gl.FRONT)
 	gl.Viewport(
