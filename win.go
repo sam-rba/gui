@@ -75,6 +75,8 @@ type Win struct {
 	img     share.Val[*image.RGBA]
 	ratio   int
 
+	child killer
+
 	kill chan bool
 	dead chan bool
 
@@ -104,6 +106,7 @@ func NewWin(opts ...WinOption) (*Win, error) {
 		draw:    make(chan func(draw.Image) image.Rectangle),
 		newSize: make(chan image.Rectangle),
 		img:     share.NewVal[*image.RGBA](),
+		child:   newKiller(),
 		kill:    make(chan bool),
 		dead:    make(chan bool),
 		threads: new(sync.WaitGroup),
@@ -180,6 +183,12 @@ func (w *Win) Events() <-chan Event { return w.events.Dequeue }
 
 // Draw returns the draw channel of the window.
 func (w *Win) Draw() chan<- func(draw.Image) image.Rectangle { return w.draw }
+
+func (w *Win) Kill() chan<- bool { return w.kill }
+
+func (w *Win) Dead() <-chan bool { return w.dead }
+
+func (w *Win) attach() chan<- victim { return w.child.attach() }
 
 var buttons = map[glfw.MouseButton]Button{
 	glfw.MouseButtonLeft:   ButtonLeft,
@@ -270,6 +279,9 @@ func (w *Win) eventThread() {
 	for {
 		select {
 		case <-w.kill:
+			w.child.Kill() <- true
+			<-w.child.Dead()
+
 			close(w.kill)
 			close(w.events.Enqueue)
 			close(w.draw)
