@@ -15,6 +15,7 @@ type Region struct {
 
 // NewRegion creates a region layout that occupies part of the parent env's area, as determined by the resize function.
 // Resize takes the area of the parent and returns the area of the region.
+// It returns the child Env.
 func NewRegion(env gui.Env, resize func(image.Rectangle) image.Rectangle, o ...Option) gui.Env {
 	opts := evalOptions(o...)
 
@@ -27,14 +28,18 @@ func NewRegion(env gui.Env, resize func(image.Rectangle) image.Rectangle, o ...O
 		area := resize(event.(gui.Resize).Rectangle) // first event guaranteed to be Resize
 		events <- gui.Resize{area}
 
-		env.Draw() <- drawBackground(opts.bg)
+		// Draw background
+		redrawBg := func(area image.Rectangle) func(draw.Image) image.Rectangle {
+			return drawSubImage(drawBackground(opts.bg), area)
+		}
+		env.Draw() <- redrawBg(area)
 
 		for {
 			select {
 			case event := <-env.Events(): // event from parent
 				switch event := event.(type) {
 				case gui.Resize:
-					env.Draw() <- drawRegion(drawBackground(opts.bg), area)
+					env.Draw() <- redrawBg(area)
 					area = resize(event.Rectangle)
 					events <- gui.Resize{area} // forward to child
 				default:
@@ -46,19 +51,12 @@ func NewRegion(env gui.Env, resize func(image.Rectangle) image.Rectangle, o ...O
 					close(env.Draw())
 					return
 				}
-				env.Draw() <- drawRegion(f, area)
+				env.Draw() <- drawSubImage(f, area)
 			}
 		}
 	}(events, drw)
 
 	return Region{events, drw}
-}
-
-// Translate a draw call to the given area.
-func drawRegion(f func(draw.Image) image.Rectangle, area image.Rectangle) func(draw.Image) image.Rectangle {
-	return func(img draw.Image) image.Rectangle {
-		return f(subimage(img, area))
-	}
 }
 
 // Events implements the Env interface.

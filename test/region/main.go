@@ -11,9 +11,7 @@ import (
 	"github.com/faiface/mainthread"
 )
 
-var (
-	bg = gui.HexToColor("#999999") // background color
-)
+var bg = gui.HexToColor("#999999") // background color
 
 func main() {
 	mainthread.Run(run)
