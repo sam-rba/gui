@@ -2,6 +2,7 @@ package layout
 
 import (
 	"image"
+	"image/color"
 	"image/draw"
 
 	"github.com/faiface/gui"
@@ -16,9 +17,7 @@ type Region struct {
 // NewRegion creates a region layout that occupies part of the parent env's area, as determined by the resize function.
 // Resize takes the area of the parent and returns the area of the region.
 // It returns the child Env.
-func NewRegion(env gui.Env, resize func(image.Rectangle) image.Rectangle, o ...Option) gui.Env {
-	opts := evalOptions(o...)
-
+func NewRegion(env gui.Env, clr color.Color, resize func(image.Rectangle) image.Rectangle) gui.Env {
 	events := make(chan gui.Event)                     // to child
 	drw := make(chan func(draw.Image) image.Rectangle) // from child
 
@@ -30,7 +29,7 @@ func NewRegion(env gui.Env, resize func(image.Rectangle) image.Rectangle, o ...O
 
 		// Draw background
 		redrawBg := func(area image.Rectangle) func(draw.Image) image.Rectangle {
-			return drawSubImage(drawBackground(opts.bg), area)
+			return drawSubImage(drawBackground(clr), area)
 		}
 		env.Draw() <- redrawBg(area)
 

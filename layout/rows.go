@@ -10,9 +10,7 @@ import (
 // NewRows creates layout with nrows children arranged in rows.
 // It returns a slice containing an Env for each row.
 // The height of each row is determined by the draw calls received from that row.
-func NewRows(env gui.Env, nrows uint, o ...Option) []gui.Env {
-	opts := evalOptions(o...)
-
+func NewRows(env gui.Env, nrows uint) []gui.Env {
 	// Create event and draw channels for each row
 	eventss := make([]chan gui.Event, nrows)                       // to children
 	drawss := make([]chan func(draw.Image) image.Rectangle, nrows) // from children
@@ -27,10 +25,6 @@ func NewRows(env gui.Env, nrows uint, o ...Option) []gui.Env {
 		defer closeAll(eventss)
 
 		resize := func(area image.Rectangle, rowHeights []uint) {
-			// Redraw background
-			env.Draw() <- drawSubImage(drawBackground(opts.bg), area)
-
-			// Send resize events to rows
 			off := area.Min // vertical offset from parent area origin
 			var i uint
 			for i = 0; i < nrows; i++ {

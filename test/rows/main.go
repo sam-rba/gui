@@ -17,7 +17,7 @@ const (
 	rowWidth  = 128
 )
 
-var bg = gui.HexToColor("#ffffea") // background color
+var bgclr = gui.HexToColor("#ffffea") // background color
 
 func main() {
 	mainthread.Run(run)
@@ -30,8 +30,8 @@ func run() {
 	}
 
 	mux, env := gui.NewMux(w)
-
-	rows := layout.NewRows(mux.MakeEnv(), nrows, layout.Background(bg))
+	bg := layout.NewRegion(mux.MakeEnv(), bgclr, layout.ResizeAll)
+	rows := layout.NewRows(bg, nrows)
 	for i, row := range rows {
 		go colorBlock(row, image.Pt(rowWidth, rowHeight), color.RGBA{uint8(i * 256 / 4), 0x20, 0x20, 0xFF})
 	}

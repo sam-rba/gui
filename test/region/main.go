@@ -2,6 +2,7 @@ package main
 
 import (
 	"image"
+	"image/color"
 	"image/draw"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/faiface/mainthread"
 )
 
-var bg = gui.HexToColor("#999999") // background color
+var bgclr = gui.HexToColor("#999999") // background color
 
 func main() {
 	mainthread.Run(run)
@@ -25,11 +26,11 @@ func run() {
 
 	mux, env := gui.NewMux(w)
 
-	// Background
-	back := layout.NewRegion(mux.MakeEnv(), layout.ResizeAll, layout.Background(bg))
+	// Background region
+	bg := layout.NewRegion(mux.MakeEnv(), bgclr, layout.ResizeAll)
 
-	// Create region on top of background, in bottom-right quadrant
-	region := layout.NewRegion(back, layout.ResizeQuad4)
+	// Region on top of background, in bottom-right quadrant
+	region := layout.NewRegion(bg, color.Transparent, layout.ResizeQuad4)
 	go blinker(region)
 
 	for event := range env.Events() {
