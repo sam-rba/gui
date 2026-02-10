@@ -34,7 +34,7 @@ func NewRegion(env gui.Env, resize func(image.Rectangle) image.Rectangle, o ...O
 			case event := <-env.Events(): // event from parent
 				switch event := event.(type) {
 				case gui.Resize:
-					env.Draw() <- drawBackground(opts.bg)
+					env.Draw() <- drawRegion(drawBackground(opts.bg), area)
 					area = resize(event.Rectangle)
 					events <- gui.Resize{area} // forward to child
 				default:
