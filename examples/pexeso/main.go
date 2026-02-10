@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -19,31 +18,25 @@ func EqualColors(c1, c2 color.Color) bool {
 	return r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2
 }
 
-func HexToColor(hex string) color.Color {
-	var r, g, b uint8
-	fmt.Sscanf(hex, "#%2X%2X%2X", &r, &g, &b)
-	return color.RGBA{r, g, b, 255}
-}
-
 var Colors = []color.Color{
-	HexToColor("#E53935"),
-	HexToColor("#F06292"),
-	HexToColor("#9C27B0"),
-	HexToColor("#673AB7"),
-	HexToColor("#3F51B5"),
-	HexToColor("#2196F3"),
-	HexToColor("#29B6F6"),
-	HexToColor("#00BCD4"),
-	HexToColor("#009688"),
-	HexToColor("#4CAF50"),
-	HexToColor("#8BC34A"),
-	HexToColor("#CDDC39"),
-	HexToColor("#FFEB3B"),
-	HexToColor("#FFC107"),
-	HexToColor("#FF9800"),
-	HexToColor("#8D6E63"),
-	HexToColor("#9E9E9E"),
-	HexToColor("#607D8B"),
+	gui.HexToColor("#E53935"),
+	gui.HexToColor("#F06292"),
+	gui.HexToColor("#9C27B0"),
+	gui.HexToColor("#673AB7"),
+	gui.HexToColor("#3F51B5"),
+	gui.HexToColor("#2196F3"),
+	gui.HexToColor("#29B6F6"),
+	gui.HexToColor("#00BCD4"),
+	gui.HexToColor("#009688"),
+	gui.HexToColor("#4CAF50"),
+	gui.HexToColor("#8BC34A"),
+	gui.HexToColor("#CDDC39"),
+	gui.HexToColor("#FFEB3B"),
+	gui.HexToColor("#FFC107"),
+	gui.HexToColor("#FF9800"),
+	gui.HexToColor("#8D6E63"),
+	gui.HexToColor("#9E9E9E"),
+	gui.HexToColor("#607D8B"),
 }
 
 type PairMsg struct {
@@ -59,7 +52,7 @@ func Tile(env gui.Env, pair chan PairMsg, r image.Rectangle, clr color.Color) {
 			bottomR.Min.Y = bottomR.Max.Y - coveredY
 			topR := r
 			topR.Max.Y = bottomR.Min.Y
-			draw.Draw(drw, bottomR, &image.Uniform{HexToColor("#37474F")}, image.ZP, draw.Src)
+			draw.Draw(drw, bottomR, &image.Uniform{gui.HexToColor("#37474F")}, image.ZP, draw.Src)
 			draw.Draw(drw, topR, &image.Uniform{clr}, image.ZP, draw.Src)
 			return r
 		}
@@ -124,7 +117,7 @@ func run() {
 
 	env.Draw() <- func(drw draw.Image) image.Rectangle {
 		r := image.Rect(0, 0, 600, 600)
-		draw.Draw(drw, r, &image.Uniform{HexToColor("#CFD8DC")}, image.ZP, draw.Src)
+		draw.Draw(drw, r, &image.Uniform{gui.HexToColor("#CFD8DC")}, image.ZP, draw.Src)
 		return r
 	}
 

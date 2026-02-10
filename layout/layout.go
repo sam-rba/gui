@@ -13,3 +13,16 @@ Draw calls from the children are intercepted and translated onto their
 respective areas before being forwarded to the parent Env.
 */
 package layout
+
+import (
+	"image"
+	"image/color"
+	"image/draw"
+)
+
+func drawBackground(c color.Color) func(draw.Image) image.Rectangle {
+	return func(img draw.Image) image.Rectangle {
+		draw.Draw(img, img.Bounds(), &image.Uniform{c}, image.ZP, draw.Src)
+		return img.Bounds()
+	}
+}
