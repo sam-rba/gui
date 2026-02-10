@@ -27,11 +27,11 @@ func run() {
 
 	mux, env := gui.NewMux(w)
 
-	// Create region in bottom-right quadrant of window
-	resize := func(r image.Rectangle) image.Rectangle {
-		return image.Rect(r.Min.X+r.Dx()/2, r.Min.Y+r.Dy()/2, r.Max.X, r.Max.Y)
-	}
-	region := layout.NewRegion(mux.MakeEnv(), resize, layout.Background(bg))
+	// Background
+	back := layout.NewRegion(mux.MakeEnv(), layout.ResizeAll, layout.Background(bg))
+
+	// Create region on top of background, in bottom-right quadrant
+	region := layout.NewRegion(back, layout.ResizeQuad4)
 	go blinker(region)
 
 	for event := range env.Events() {

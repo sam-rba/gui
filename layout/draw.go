@@ -2,9 +2,11 @@ package layout
 
 import (
 	"image"
+	"image/color"
 	"image/draw"
 )
 
+// subimager is implemented by most Image types.
 type subimager interface {
 	SubImage(image.Rectangle) image.Image
 }
@@ -14,4 +16,12 @@ type subimager interface {
 // Panics if the concrete image type does not have a SubImage() method.
 func subimage(m draw.Image, r image.Rectangle) draw.Image {
 	return m.(subimager).SubImage(r).(draw.Image)
+}
+
+// drawBackground returns a draw call that fills the entire image with a color.
+func drawBackground(c color.Color) func(draw.Image) image.Rectangle {
+	return func(img draw.Image) image.Rectangle {
+		draw.Draw(img, img.Bounds(), &image.Uniform{c}, image.ZP, draw.Src)
+		return img.Bounds()
+	}
 }
