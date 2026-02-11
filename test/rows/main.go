@@ -30,7 +30,7 @@ func run() {
 	}
 
 	mux, env := gui.NewMux(w)
-	bg := layout.NewRegion(mux.MakeEnv(), bgclr, layout.ResizeAll)
+	bg := layout.NewRegion(mux.MakeEnv(), bgclr, layout.Full())
 	rows := layout.NewRows(bg, nrows)
 	for i, row := range rows {
 		go colorBlock(row, image.Pt(rowWidth, rowHeight), color.RGBA{uint8(i * 256 / 4), 0x20, 0x20, 0xFF})

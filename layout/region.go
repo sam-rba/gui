@@ -17,45 +17,46 @@ type Region struct {
 // NewRegion creates a region layout that occupies part of the parent env's area, as determined by the resize function.
 // Resize takes the area of the parent and returns the area of the region.
 // It returns the child Env.
-func NewRegion(env gui.Env, clr color.Color, resize func(image.Rectangle) image.Rectangle) gui.Env {
-	events := make(chan gui.Event)                     // to child
-	drw := make(chan func(draw.Image) image.Rectangle) // from child
+func NewRegion(env gui.Env, clr color.Color, resize ResizeFunc) gui.Env {
+	events := make(chan gui.Event)                       // to child
+	draws := make(chan func(draw.Image) image.Rectangle) // from child
 
-	go func(events chan<- gui.Event, drw <-chan func(draw.Image) image.Rectangle) {
-		// Forward first resize event to child
-		event := <-env.Events()
-		area := resize(event.(gui.Resize).Rectangle) // first event guaranteed to be Resize
-		events <- gui.Resize{area}
+	go func(events chan<- gui.Event, draws <-chan func(draw.Image) image.Rectangle) {
+		defer close(env.Draw())
+		defer close(events)
 
-		// Draw background
-		redrawBg := func(area image.Rectangle) func(draw.Image) image.Rectangle {
-			return drawSubImage(drawBackground(clr), area)
+		redraw := func(area, childArea image.Rectangle) {
+			env.Draw() <- drawSubImage(drawBackground(clr), area)
+			events <- gui.Resize{childArea}
 		}
-		env.Draw() <- redrawBg(area)
+
+		// Draw background and forward first resize event to child
+		event := (<-env.Events()).(gui.Resize) // first event guaranteed to be Resize
+		area := event.Rectangle
+		childArea := resize(area)
+		go redraw(area, childArea)
 
 		for {
 			select {
 			case event := <-env.Events(): // event from parent
 				switch event := event.(type) {
 				case gui.Resize:
-					env.Draw() <- redrawBg(area)
-					area = resize(event.Rectangle)
-					events <- gui.Resize{area} // forward to child
+					area = event.Rectangle
+					childArea = resize(area)
+					go redraw(area, childArea)
 				default:
-					events <- event
+					go func() { events <- event }() // forward to child
 				}
-			case f, ok := <-drw: // draw call from child
+			case f, ok := <-draws: // draw call from child
 				if !ok {
-					close(events)
-					close(env.Draw())
 					return
 				}
-				env.Draw() <- drawSubImage(f, area)
+				env.Draw() <- drawSubImage(f, childArea)
 			}
 		}
-	}(events, drw)
+	}(events, draws)
 
-	return Region{events, drw}
+	return Region{events, draws}
 }
 
 // Events implements the Env interface.

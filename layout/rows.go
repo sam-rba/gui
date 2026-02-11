@@ -39,7 +39,7 @@ func NewRows(env gui.Env, nrows uint) []gui.Env {
 		event := (<-env.Events()).(gui.Resize) // first event guaranteed to be Resize
 		area := event.Rectangle
 		rowHeights := make([]uint, nrows) // initially zero until draw call received
-		resize(area, rowHeights)          // send first Resize to children
+		go resize(area, rowHeights)       // send first Resize to children
 
 		// Multiplex rows' draw channels. Tag draw functions with row index.
 		draws := make(chan taggedDrawCall)
@@ -56,9 +56,9 @@ func NewRows(env gui.Env, nrows uint) []gui.Env {
 				switch event := event.(type) {
 				case gui.Resize:
 					area = event.Rectangle
-					resize(area, rowHeights)
+					go resize(area, rowHeights)
 				default:
-					multicast(event, eventss) // forward event to all rows
+					go multicast(event, eventss) // forward event to all rows
 				}
 			case drw := <-draws: // draw call from a row
 				rh := rowHeight(area, drw.f)

@@ -12,7 +12,16 @@ import (
 	"github.com/faiface/mainthread"
 )
 
-var bgclr = gui.HexToColor("#999999") // background color
+const (
+	margin  = 10
+	border  = 2
+	padding = 15
+)
+
+var (
+	bgClr   = gui.HexToColor("#999999") // background color
+	brdrClr = color.RGBA{0xFF, 0x00, 0xFF, 0xFF}
+)
 
 func main() {
 	mainthread.Run(run)
@@ -27,10 +36,16 @@ func run() {
 	mux, env := gui.NewMux(w)
 
 	// Background
-	bg := layout.NewRegion(mux.MakeEnv(), bgclr, layout.Full())
+	bg := layout.NewRegion(mux.MakeEnv(), bgClr, layout.Full())
 
-	// Region in bottom-right quadrant
-	region := layout.NewRegion(bg, color.Transparent, layout.Quad4())
+	// Margin, border, and padding
+	border := layout.NewBorder(bg, layout.Margin(margin), layout.Border(border, brdrClr), layout.Padding(padding))
+
+	//region := layout.NewRegion(border, color.White, layout.Full())
+	//go func() { for range region.Events() {} }()
+
+	// Region in top-right quadrant
+	region := layout.NewRegion(border, color.Transparent, layout.Quad1())
 	go blinker(region)
 
 	for event := range env.Events() {
