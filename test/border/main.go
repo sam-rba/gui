@@ -39,7 +39,7 @@ func run() {
 	bg := layout.NewRegion(mux.MakeEnv(), bgClr, layout.Full())
 
 	// Margin, border, and padding
-	border := layout.NewBorder(bg, layout.Margin(margin), layout.Border(border, brdrClr), layout.Padding(padding))
+	border := layout.NewBorder(bg, layout.MarginAll(margin), layout.BorderAll(border), layout.BorderColor(brdrClr), layout.PaddingAll(padding))
 
 	//region := layout.NewRegion(border, color.White, layout.Full())
 	//go func() { for range region.Events() {} }()

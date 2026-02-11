@@ -9,7 +9,15 @@ import (
 	"github.com/faiface/gui"
 )
 
-// NewBorder creates a layout with a margin, border, and padding drawn around itself.
+// Border is a layout that draws a border around itself. It can have margin outside
+// the border, and padding inside the border. It can also be used just for spacing,
+// with only margin/padding and no border.
+type Border struct {
+	events <-chan gui.Event
+	draw   chan<- func(draw.Image) image.Rectangle
+}
+
+// NewBorder creates a Border layout with optional margin, border, and padding thicknesses.
 func NewBorder(env gui.Env, opts ...BorderOption) gui.Env {
 	o := evalBorderOptions(opts...)
 
@@ -50,7 +58,7 @@ func NewBorder(env gui.Env, opts ...BorderOption) gui.Env {
 		}
 	}(events, draws)
 
-	return NewRegion(borderEnv{events, draws}, color.Transparent, Full())
+	return Border{events, draws}
 }
 
 // BorderContentArea returns the drawable area inside the margin,
@@ -86,8 +94,8 @@ type borderOptions struct {
 
 type sides struct{ top, right, bottom, left int }
 
-// Margin option sets the margin size, in pixels, on all sides.
-func Margin(px int) BorderOption {
+// MarginAll option sets the margin size (in pixels) on all sides.
+func MarginAll(px int) BorderOption {
 	if px < 0 {
 		panic(fmt.Sprintf("margin %d < 0", px))
 	}
@@ -126,20 +134,19 @@ func MarginLeft(px int) BorderOption {
 	return func(o *borderOptions) { o.margin.left = px }
 }
 
-// Border option sets the border thickness (in pixels) and color on all sides.
-func Border(thick int, c color.Color) BorderOption {
-	if thick < 0 {
-		panic(fmt.Sprintf("border thickness %d < 0", thick))
-	}
-	return func(o *borderOptions) {
-		o.border = sides{thick, thick, thick, thick}
-		o.Color = c
-	}
-}
-
 // BorderColor sets the color of the border.
 func BorderColor(c color.Color) BorderOption {
 	return func(o *borderOptions) { o.Color = c }
+}
+
+// BorderAll option sets the border thickness (in pixels) on all sides.
+func BorderAll(px int) BorderOption {
+	if px < 0 {
+		panic(fmt.Sprintf("border thickness %d < 0", px))
+	}
+	return func(o *borderOptions) {
+		o.border = sides{px, px, px, px}
+	}
 }
 
 // BorderTop sets the top border thickness, in pixels.
@@ -174,8 +181,8 @@ func BorderLeft(thick int) BorderOption {
 	return func(o *borderOptions) { o.border.left = thick }
 }
 
-// Padding option sets the padding size, in pixels, on all sides.
-func Padding(px int) BorderOption {
+// PaddingAll option sets the padding size (in pixels) on all sides.
+func PaddingAll(px int) BorderOption {
 	if px < 0 {
 		panic(fmt.Sprintf("padding %d < 0", px))
 	}
@@ -222,13 +229,8 @@ func evalBorderOptions(opts ...BorderOption) borderOptions {
 	return o
 }
 
-type borderEnv struct {
-	events <-chan gui.Event
-	draw   chan<- func(draw.Image) image.Rectangle
-}
-
 // Events implements the Env interface.
-func (b borderEnv) Events() <-chan gui.Event { return b.events }
+func (b Border) Events() <-chan gui.Event { return b.events }
 
 // Draw implements the Env interface.
-func (b borderEnv) Draw() chan<- func(draw.Image) image.Rectangle { return b.draw }
+func (b Border) Draw() chan<- func(draw.Image) image.Rectangle { return b.draw }
