@@ -26,7 +26,7 @@ func ColorPicker(env gui.Env, pick chan<- color.Color, r image.Rectangle, clr co
 		}
 	}
 
-	close(env.Draw())
+	env.Close()
 }
 
 func Canvas(env gui.Env, pick <-chan color.Color, r image.Rectangle) {
@@ -51,7 +51,7 @@ func Canvas(env gui.Env, pick <-chan color.Color, r image.Rectangle) {
 
 		case event, ok := <-env.Events():
 			if !ok {
-				close(env.Draw())
+				env.Close()
 				return
 			}
 
@@ -118,7 +118,7 @@ func run() {
 	for event := range env.Events() {
 		switch event.(type) {
 		case win.WiClose:
-			close(env.Draw())
+			env.Close()
 		}
 	}
 }

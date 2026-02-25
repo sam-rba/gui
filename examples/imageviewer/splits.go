@@ -8,12 +8,16 @@ import (
 )
 
 type envPair struct {
+	env    gui.Env
 	events <-chan gui.Event
 	draw   chan<- func(draw.Image) image.Rectangle
+	impose chan<- gui.Constraint
 }
 
 func (ep *envPair) Events() <-chan gui.Event                      { return ep.events }
 func (ep *envPair) Draw() chan<- func(draw.Image) image.Rectangle { return ep.draw }
+func (ep *envPair) Impose() chan<- gui.Constraint                 { return ep.impose }
+func (ep *envPair) Close()                                        { ep.env.Close() }
 
 func FixedLeft(env gui.Env, maxX int) gui.Env {
 	out, in := gui.MakeEventsChan()
@@ -30,7 +34,7 @@ func FixedLeft(env gui.Env, maxX int) gui.Env {
 		close(in)
 	}()
 
-	return &envPair{out, env.Draw()}
+	return &envPair{env, out, env.Draw(), env.Impose()}
 }
 
 func FixedRight(env gui.Env, minX int) gui.Env {
@@ -48,7 +52,7 @@ func FixedRight(env gui.Env, minX int) gui.Env {
 		close(in)
 	}()
 
-	return &envPair{out, env.Draw()}
+	return &envPair{env, out, env.Draw(), env.Impose()}
 }
 
 func FixedTop(env gui.Env, maxY int) gui.Env {
@@ -66,7 +70,7 @@ func FixedTop(env gui.Env, maxY int) gui.Env {
 		close(in)
 	}()
 
-	return &envPair{out, env.Draw()}
+	return &envPair{env, out, env.Draw(), env.Impose()}
 }
 
 func FixedBottom(env gui.Env, minY int) gui.Env {
@@ -84,7 +88,7 @@ func FixedBottom(env gui.Env, minY int) gui.Env {
 		close(in)
 	}()
 
-	return &envPair{out, env.Draw()}
+	return &envPair{env, out, env.Draw(), env.Impose()}
 }
 
 func EvenHorizontal(env gui.Env, minI, maxI, n int) gui.Env {
@@ -103,5 +107,5 @@ func EvenHorizontal(env gui.Env, minI, maxI, n int) gui.Env {
 		close(in)
 	}()
 
-	return &envPair{out, env.Draw()}
+	return &envPair{env, out, env.Draw(), env.Impose()}
 }

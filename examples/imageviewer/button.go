@@ -58,5 +58,5 @@ func Button(env gui.Env, theme *Theme, text string, action func()) {
 		}
 	}
 
-	close(env.Draw())
+	env.Close()
 }

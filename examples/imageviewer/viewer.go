@@ -50,7 +50,7 @@ func Viewer(env gui.Env, theme *Theme, view <-chan string) {
 
 		case e, ok := <-env.Events():
 			if !ok {
-				close(env.Draw())
+				env.Close()
 				return
 			}
 			if resize, ok := e.(gui.Resize); ok {

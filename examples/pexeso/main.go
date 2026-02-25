@@ -90,7 +90,7 @@ func Tile(env gui.Env, pair chan PairMsg, r image.Rectangle, clr color.Color) {
 				}
 
 				if correct {
-					close(env.Draw())
+					env.Close()
 					return
 				}
 
@@ -144,7 +144,7 @@ func run() {
 	for event := range env.Events() {
 		switch event.(type) {
 		case win.WiClose:
-			close(env.Draw())
+			env.Close()
 		}
 	}
 }

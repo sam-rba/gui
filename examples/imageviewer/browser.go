@@ -108,7 +108,7 @@ func Browser(env gui.Env, theme *Theme, dir string, cd <-chan string, view chan<
 
 		case e, ok := <-env.Events():
 			if !ok {
-				close(env.Draw())
+				env.Close()
 				return
 			}
 
