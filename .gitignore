@@ -1,2 +1,5 @@
 .vscode
 bin
+examples/imageviewer/imageviewer
+examples/paint/paint
+examples/pexeso/pexeso
