@@ -1,6 +1,7 @@
 package win
 
 import (
+	"context"
 	"image"
 	"image/draw"
 	"runtime"
@@ -13,51 +14,24 @@ import (
 	"github.com/go-gl/glfw/v3.2/glfw"
 )
 
-// Option is a functional option to the window constructor New.
-type Option func(*options)
+// Win is an Env that handles an actual graphical window.
+//
+// It receives its events from the OS and it draws to the surface of the window.
+//
+// Warning: only one window can be open at a time. This will be fixed.
+type Win struct {
+	eventsOut <-chan gui.Event
+	eventsIn  chan<- gui.Event
+	draw      chan func(draw.Image) image.Rectangle
+	impose    chan gui.Constraint
 
-type options struct {
-	title         string
-	width, height int
-	resizable     bool
-	borderless    bool
-	maximized     bool
-}
+	newSize chan image.Rectangle
+	ctx     context.Context
+	cancel  func()
 
-// Title option sets the title (caption) of the window.
-func Title(title string) Option {
-	return func(o *options) {
-		o.title = title
-	}
-}
-
-// Size option sets the width and height of the window.
-func Size(width, height int) Option {
-	return func(o *options) {
-		o.width = width
-		o.height = height
-	}
-}
-
-// Resizable option makes the window resizable by the user.
-func Resizable() Option {
-	return func(o *options) {
-		o.resizable = true
-	}
-}
-
-// Borderless option makes the window borderless.
-func Borderless() Option {
-	return func(o *options) {
-		o.borderless = true
-	}
-}
-
-// Maximized option makes the window start maximized.
-func Maximized() Option {
-	return func(o *options) {
-		o.maximized = true
-	}
+	w     *glfw.Window
+	img   *image.RGBA
+	ratio int
 }
 
 // New creates a new window with all the supplied options.
@@ -77,13 +51,15 @@ func New(opts ...Option) (*Win, error) {
 	}
 
 	eventsOut, eventsIn := gui.MakeEventsChan()
-
+	ctx, cancel := context.WithCancel(context.Background())
 	w := &Win{
 		eventsOut: eventsOut,
 		eventsIn:  eventsIn,
 		draw:      make(chan func(draw.Image) image.Rectangle),
+		impose:    make(chan gui.Constraint),
 		newSize:   make(chan image.Rectangle),
-		finish:    make(chan struct{}),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 
 	var err error
@@ -152,29 +128,28 @@ func makeGLFWWin(o *options) (*glfw.Window, error) {
 	return w, nil
 }
 
-// Win is an Env that handles an actual graphical window.
-//
-// It receives its events from the OS and it draws to the surface of the window.
-//
-// Warning: only one window can be open at a time. This will be fixed.
-type Win struct {
-	eventsOut <-chan gui.Event
-	eventsIn  chan<- gui.Event
-	draw      chan func(draw.Image) image.Rectangle
-
-	newSize chan image.Rectangle
-	finish  chan struct{}
-
-	w     *glfw.Window
-	img   *image.RGBA
-	ratio int
-}
-
 // Events returns the events channel of the window.
 func (w *Win) Events() <-chan gui.Event { return w.eventsOut }
 
 // Draw returns the draw channel of the window.
 func (w *Win) Draw() chan<- func(draw.Image) image.Rectangle { return w.draw }
+
+// Impose returns the impose channel of the window.
+// The window ignores constraints sent to the impose channel.
+func (w *Win) Impose() chan<- gui.Constraint { return w.impose }
+
+// Close destroys the window.
+func (w *Win) Close() {
+	w.cancel()
+}
+
+func (w *Win) close() {
+	close(w.eventsIn)
+	close(w.draw)
+	close(w.impose)
+	close(w.newSize)
+	w.w.Destroy()
+}
 
 var buttons = map[glfw.MouseButton]Button{
 	glfw.MouseButtonLeft:   ButtonLeft,
@@ -264,9 +239,8 @@ func (w *Win) eventThread() {
 
 	for {
 		select {
-		case <-w.finish:
-			close(w.eventsIn)
-			w.w.Destroy()
+		case <-w.ctx.Done():
+			w.close()
 			return
 		default:
 			glfw.WaitEventsTimeout(1.0 / 30)
@@ -291,13 +265,15 @@ loop:
 			w.img = img
 			totalR = totalR.Union(r)
 
-		case d, ok := <-w.draw:
-			if !ok {
-				close(w.finish)
-				return
-			}
+		case d := <-w.draw:
 			r := d(w.img)
 			totalR = totalR.Union(r)
+
+		case <-w.impose:
+			// ignore
+
+		case <-w.ctx.Done():
+			return
 		}
 
 		for {
@@ -313,13 +289,15 @@ loop:
 				w.img = img
 				totalR = totalR.Union(r)
 
-			case d, ok := <-w.draw:
-				if !ok {
-					close(w.finish)
-					return
-				}
+			case d := <-w.draw:
 				r := d(w.img)
 				totalR = totalR.Union(r)
+
+			case <-w.impose:
+				// ignore
+
+			case <-w.ctx.Done():
+				return
 			}
 		}
 	}
