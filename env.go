@@ -3,6 +3,8 @@ package gui
 import (
 	"image"
 	"image/draw"
+
+	"github.com/faiface/gui/lay/strain"
 )
 
 // Env is the most important thing in this package. It is an interactive graphical
@@ -35,7 +37,7 @@ type Env interface {
 	// enough space.
 	//
 	// The Impose() channel may be synchronous.
-	Impose() chan<- Constraint
+	Impose() chan<- strain.Constraint
 
 	// Close destroys the Env. The Env will subsequently close the Events(), Draw(),
 	// and Impose() channels.

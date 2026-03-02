@@ -3,6 +3,8 @@ package gui
 import (
 	"image"
 	"image/draw"
+
+	"github.com/faiface/gui/lay/strain"
 )
 
 // Mux can be used to multiplex an Env, let's call it a root Env. Mux implements a way to
@@ -11,7 +13,7 @@ import (
 type Mux struct {
 	eventsIns chan chan<- Event
 	draw      chan<- func(draw.Image) image.Rectangle
-	impose    chan<- Constraint
+	impose    chan<- strain.Constraint
 	finish    chan<- struct{}
 }
 
