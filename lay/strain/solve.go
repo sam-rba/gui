@@ -98,7 +98,6 @@ func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, err
 			constr, fieldIdx := tc.Val, tc.Tag
 			err := s.addSizeConstraint(constr, fieldIdx)
 			if err != nil {
-				// TODO: run the solver in a golang.org/x/sync/errgroup rather than just logging errors.
 				log.Err.Printf("error adding layout constraint %#v from field %d: %v\n",
 					constr, fieldIdx, err)
 			}
