@@ -12,6 +12,11 @@ import (
 	"github.com/faiface/gui/style"
 )
 
+const (
+	fieldConstraintPriority  = casso.Medium
+	layoutConstraintPriority = casso.Medium
+)
+
 // Solver uses the Cassowary algorithm to partition a rectangle among
 // several layout fields.
 //
@@ -80,7 +85,7 @@ func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, err
 	solver := casso.NewSolver()
 	container := NewSymRect()
 	if err := editRect(solver, container, casso.Strong); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error marking container symbol as editable: %w", err)
 	}
 
 	s := &Solver{
@@ -96,7 +101,9 @@ func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, err
 	go func() {
 		for tc := range fieldConstrs {
 			constr, fieldIdx := tc.Val, tc.Tag
-			err := s.addSizeConstraint(constr, fieldIdx)
+			s.mu.Lock()
+			err := s.addFieldSizeConstraint(constr, fieldIdx)
+			s.mu.Unlock()
 			if err != nil {
 				log.Err.Printf("error adding layout constraint %#v from field %d: %v\n",
 					constr, fieldIdx, err)
@@ -104,19 +111,30 @@ func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, err
 		}
 	}()
 
-	return s, nil
+	if err := s.addDefaultConstraints(); err != nil {
+		return nil, fmt.Errorf("error adding default constraint: %w", err)
+	}
 
-	// TODO: add some universal constraints:
-	// - field size <= container size
-	// - field origin >= container origin
+	return s, nil
+}
+
+func (s *Solver) addDefaultConstraints() error {
+	for _, field := range s.fields {
+		if err := s.AddConstraintPt(casso.GTE, field.Origin, s.container.Origin); err != nil {
+			return err
+		}
+		if err := s.AddConstraintPt(casso.LTE, field.Size, s.container.Size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // addSizeConstraint adds or modifies a constraint on the size of a
 // field, removing mutually exclusive constraints.
-func (s *Solver) addSizeConstraint(constr Constraint, i fieldIndex) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+//
+// Solver.mu must be held.
+func (s *Solver) addFieldSizeConstraint(constr Constraint, i fieldIndex) error {
 	fieldSize := s.fields[i].Size
 	fieldConstrs := &s.fieldSizeConstrs[i]
 
@@ -127,21 +145,21 @@ func (s *Solver) addSizeConstraint(constr Constraint, i fieldIndex) error {
 		switch constr.Op {
 		case casso.EQ:
 			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthGte, fieldConstrs.widthLte)
-			c, err := s.solver.AddConstraint(casso.NewConstraint(constr.Op, -width, fieldSize.X.T(1.0)))
+			c, err := s.addFieldConstraint(constr.Op, -width, fieldSize.X.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.widthEq = &c
 		case casso.GTE:
 			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthGte)
-			c, err := s.solver.AddConstraint(casso.NewConstraint(constr.Op, -width, fieldSize.X.T(1.0)))
+			c, err := s.addFieldConstraint(constr.Op, -width, fieldSize.X.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.widthGte = &c
 		case casso.LTE:
 			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthLte)
-			c, err := s.solver.AddConstraint(casso.NewConstraint(constr.Op, -width, fieldSize.X.T(1.0)))
+			c, err := s.addFieldConstraint(constr.Op, -width, fieldSize.X.T(1.0))
 			if err != nil {
 				return err
 			}
@@ -154,21 +172,21 @@ func (s *Solver) addSizeConstraint(constr Constraint, i fieldIndex) error {
 		switch constr.Op {
 		case casso.EQ:
 			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightGte, fieldConstrs.heightLte)
-			c, err := s.solver.AddConstraint(casso.NewConstraint(constr.Op, -height, fieldSize.Y.T(1.0)))
+			c, err := s.addFieldConstraint(constr.Op, -height, fieldSize.Y.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.heightEq = &c
 		case casso.GTE:
 			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightGte)
-			c, err := s.solver.AddConstraint(casso.NewConstraint(constr.Op, -height, fieldSize.Y.T(1.0)))
+			c, err := s.addFieldConstraint(constr.Op, -height, fieldSize.Y.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.heightGte = &c
 		case casso.LTE:
 			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightLte)
-			c, err := s.solver.AddConstraint(casso.NewConstraint(constr.Op, -height, fieldSize.Y.T(1.0)))
+			c, err := s.addFieldConstraint(constr.Op, -height, fieldSize.Y.T(1.0))
 			if err != nil {
 				return err
 			}
@@ -183,6 +201,7 @@ func (s *Solver) addSizeConstraint(constr Constraint, i fieldIndex) error {
 	return nil
 }
 
+// Solver.mu must be held.
 func (s *Solver) removeConstraints(constrs ...*casso.Symbol) error {
 	for _, constr := range constrs {
 		if constr != nil {
@@ -192,6 +211,13 @@ func (s *Solver) removeConstraints(constrs ...*casso.Symbol) error {
 		}
 	}
 	return nil
+}
+
+// Solver.mu must be held.
+func (s *Solver) addFieldConstraint(op casso.Op, constant float64, terms ...casso.Term) (casso.Symbol, error) {
+	return s.solver.AddConstraintWithPriority(
+		fieldConstraintPriority,
+		casso.NewConstraint(op, constant, terms...))
 }
 
 // Container returns the Cassowary symbols representing the layout
@@ -209,8 +235,20 @@ func (s *Solver) Field(i int) SymRect { return s.fields[i] }
 func (s *Solver) AddConstraint(op casso.Op, lhs, rhs casso.Symbol) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.solver.AddConstraint(casso.NewConstraint(op, 0, lhs.T(1.0), rhs.T(-1.0)))
+	_, err := s.solver.AddConstraintWithPriority(layoutConstraintPriority, casso.NewConstraint(op, 0, lhs.T(1.0), rhs.T(-1.0)))
 	return err
+}
+
+// AddConstraintPt imposes a constraint between two point symbols:
+// (lhs.X op rhs.X) and (lhs.Y op rhs.Y).
+func (s *Solver) AddConstraintPt(op casso.Op, lhs, rhs SymPt) error {
+	if err := s.AddConstraint(op, lhs.X, rhs.X); err != nil {
+		return err
+	}
+	if err := s.AddConstraint(op, lhs.Y, rhs.Y); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Solve uses the constraints that the Solver has received so far to
@@ -241,4 +279,5 @@ func (s *Solver) Solve(container image.Rectangle) ([]image.Rectangle, error) {
 	return fields, nil
 }
 
+// Solver.mu must be held.
 func (s *Solver) intVal(sym casso.Symbol) int { return int(s.solver.Val(sym)) }

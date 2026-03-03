@@ -8,6 +8,7 @@ import (
 	"testing/synctest"
 
 	"github.com/lithdew/casso"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/shiny/unit"
 	"golang.org/x/image/math/fixed"
 
@@ -35,12 +36,6 @@ func newSolverTest(t *testing.T, constraints []<-chan strain.Constraint) solverT
 
 func (st solverTest) Close() {
 	if err := st.Style.Close(); err != nil {
-		st.t.Error(err)
-	}
-}
-
-func (st solverTest) addConstraint(op casso.Op, lhs, rhs casso.Symbol) {
-	if err := st.Solver.AddConstraint(op, lhs, rhs); err != nil {
 		st.t.Error(err)
 	}
 }
@@ -91,10 +86,8 @@ func TestSingleField(t *testing.T) {
 	// Add layout constraints
 	container := st.Solver.Container()
 	field := st.Solver.Field(0)
-	st.addConstraint(casso.EQ, field.Origin.X, container.Origin.X)
-	st.addConstraint(casso.EQ, field.Origin.Y, container.Origin.Y)
-	st.addConstraint(casso.EQ, field.Size.X, container.Size.X)
-	st.addConstraint(casso.EQ, field.Size.Y, container.Size.Y)
+	require.NoError(t, st.Solver.AddConstraintPt(casso.EQ, field.Origin, container.Origin))
+	require.NoError(t, st.Solver.AddConstraintPt(casso.EQ, field.Size, container.Size))
 
 	// Solve
 	for _, container := range []image.Rectangle{
@@ -107,7 +100,7 @@ func TestSingleField(t *testing.T) {
 	}
 }
 
-// Widget gives its minimum size.
+// Field gives its minimum size.
 func TestFieldMinSize(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -137,6 +130,27 @@ func TestFieldMinSize(t *testing.T) {
 			}
 			return nil
 		})
+	})
+}
+
+// Field min size larger than container.
+func TestFieldMinSizeLargerThanContainer(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		// Setup
+		constraints := make(chan strain.Constraint)
+		st := newSolverTest(t, []<-chan strain.Constraint{constraints})
+		defer st.Close()
+		defer close(constraints)
+
+		// Add widget constraints
+		constraints <- strain.Constraint{strain.Width, casso.GTE, unit.Value{200, unit.Px}}
+		constraints <- strain.Constraint{strain.Height, casso.GTE, unit.Value{300, unit.Px}}
+		synctest.Wait()
+
+		// Solve
+		container := image.Rect(12, 34, 100, 200)
+		st.solve(container, validateEq([]image.Rectangle{container}))
 	})
 }
 
