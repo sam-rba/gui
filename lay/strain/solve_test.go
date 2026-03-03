@@ -5,6 +5,7 @@ import (
 	"image"
 	"slices"
 	"testing"
+	"testing/synctest"
 
 	"github.com/lithdew/casso"
 	"golang.org/x/exp/shiny/unit"
@@ -79,8 +80,9 @@ func TestTrivial(t *testing.T) {
 
 // One field that occupies the whole container.
 func TestSingleField(t *testing.T) {
-	// Setup
 	t.Parallel()
+
+	// Setup
 	constraints := make(chan strain.Constraint)
 	st := newSolverTest(t, []<-chan strain.Constraint{constraints})
 	defer st.Close()
@@ -105,6 +107,39 @@ func TestSingleField(t *testing.T) {
 	}
 }
 
+// Widget gives its minimum size.
+func TestFieldMinSize(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		// Setup
+		constraints := make(chan strain.Constraint)
+		st := newSolverTest(t, []<-chan strain.Constraint{constraints})
+		defer st.Close()
+		defer close(constraints)
+
+		// Add widget constraints
+		minWidth := unit.Value{32, unit.Ch}
+		minHeight := unit.Value{1.5, unit.Em}
+		constraints <- strain.Constraint{strain.Width, casso.GTE, minWidth}
+		constraints <- strain.Constraint{strain.Height, casso.GTE, minHeight}
+		synctest.Wait()
+
+		// Solve
+		st.solve(image.Rect(12, 34, 800, 600), func(fields []image.Rectangle) error {
+			if len(fields) != 1 {
+				return fmt.Errorf("got %d fields; want %d", len(fields), 1)
+			}
+			field := fields[0]
+			if fixed.I(field.Dx()) < st.Style.Pixels(minWidth) {
+				return fmt.Errorf("dx = %v; want >= %v", field.Dx(), st.Style.Pixels(minWidth))
+			} else if fixed.I(field.Dy()) < st.Style.Pixels(minHeight) {
+				return fmt.Errorf("dy = %v; want >= %v", field.Dy(), st.Style.Pixels(minHeight))
+			}
+			return nil
+		})
+	})
+}
+
 // Solver with only layout constaints, no field constraints.
 func TestLayConstrs(t *testing.T) {
 	t.Parallel()
@@ -112,36 +147,5 @@ func TestLayConstrs(t *testing.T) {
 	st := newSolverTest(t, nil)
 	defer st.Close()
 
-	t.Fail() // TODO
-}
-
-// Widget gives its minimum size.
-func TestFieldMinSize(t *testing.T) {
-	t.Parallel()
-
-	// Setup
-	constraints := make(chan strain.Constraint)
-	st := newSolverTest(t, []<-chan strain.Constraint{constraints})
-	defer st.Close()
-	defer close(constraints)
-
-	// Add widget constraints
-	minWidth := unit.Value{32, unit.Ch}
-	minHeight := unit.Value{1.5, unit.Em}
-	constraints <- strain.Constraint{strain.Width, casso.GTE, minWidth}
-	constraints <- strain.Constraint{strain.Height, casso.GTE, minHeight}
-
-	// Solve
-	st.solve(image.Rect(12, 34, 800, 600), func(fields []image.Rectangle) error {
-		if len(fields) != 1 {
-			return fmt.Errorf("got %d fields; want %d", len(fields), 1)
-		}
-		field := fields[0]
-		if fixed.I(field.Dx()) < st.Style.Pixels(minWidth) {
-			return fmt.Errorf("dx = %v; want >= %v", field.Dx(), st.Style.Pixels(minWidth))
-		} else if fixed.I(field.Dy()) < st.Style.Pixels(minHeight) {
-			return fmt.Errorf("dy = %v; want >= %v", field.Dy(), st.Style.Pixels(minHeight))
-		}
-		return nil
-	})
+	t.Fail() // TODO: more tests
 }
