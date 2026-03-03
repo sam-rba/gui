@@ -1,9 +1,9 @@
 package strain
 
 import (
-	"context"
 	"fmt"
 	"image"
+	"sync"
 
 	"github.com/lithdew/casso"
 
@@ -22,27 +22,26 @@ import (
 // and size of fields within the container, while the field
 // constraints control the width and height of each field.
 type Solver struct {
-	solver *casso.Solver
+	solver       *casso.Solver
+	style        *style.Style
+	fieldConstrs chan tag.Tagged[Constraint, fieldIndex] // incoming constraints from fields
 
 	// External symbols
-	container    SymRect // position and size of container
-	fields []SymRect // position and size of each field
+	container SymRect   // position and size of container
+	fields    []SymRect // position and size of each field
 
-	fieldSizeConstrs []sizeConstraint
+	// Constraint ID symbols
+	fieldSizeConstrs []sizeConstraintSymbols
 
-	fieldConstrs  chan tag.Tagged[Constraint, int] // constraints from fields, tagged by index
-	layoutConstrs chan constrainRequest            // constraints from the layout via AddConstraint()
-	solveReqs     chan solveRequest
-
-	style *style.Style
-
-	ctx    context.Context
-	cancel func()
+	mu sync.Mutex
 }
 
-// sizeConstraint sets upper/lower/exact bounds on the width and
-// height of a field.
-type sizeConstraint struct {
+type fieldIndex int
+
+// sizeConstraintSymbols is a set of constraint ID symbols that
+// control the upper/lower/exact bounds on the width and height of a
+// field.
+type sizeConstraintSymbols struct {
 	widthEq, widthGte, widthLte    *casso.Symbol
 	heightEq, heightGte, heightLte *casso.Symbol
 
@@ -52,94 +51,75 @@ type sizeConstraint struct {
 	// Nil means no constraint.
 }
 
-type constrainRequest struct {
-	constr casso.Constraint
-	res    chan<- error
-}
-
-type solveRequest struct {
-	container image.Rectangle
-	res       chan<- solveResponse
-}
-
-type solveResponse struct {
-	fields []image.Rectangle
-	err    error
-}
-
 // NewSolver creates a Solver that can be used to resolve constraints
-// received from the given channels; one channel per field in the
+// received from the given channels: one channel per field in the
 // layout. These are generally the receiving side of some Envs'
 // Impose() channels.
-//
-// The Solver should be closed after use, but not before all of the
-// constraint channels have been closed.
 func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, error) {
 	nfields := len(constraints)
-
-	fieldConstrs := make(chan tag.Tagged[Constraint, int])
 	fields := make([]SymRect, nfields)
+	fieldConstrs := make(chan tag.Tagged[Constraint, fieldIndex])
+	var wg sync.WaitGroup
+	wg.Add(nfields)
 	for i, cs := range constraints {
-		go tag.Tag(fieldConstrs, cs, func(c Constraint) int { return i })
 		fields[i] = NewSymRect()
+		go func() {
+			// Tag incoming field constraints by field index and multiplex them into fieldConstrs
+			tag.Tag(fieldConstrs, cs, func(c Constraint) fieldIndex {
+				return fieldIndex(i)
+			})
+			wg.Done()
+		}()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	solver := &Solver{
-		casso.NewSolver(),
-		NewSymRect(),
-		fields,
-		make([]sizeConstraint, nfields),
-		fieldConstrs,
-		make(chan constrainRequest),
-		make(chan solveRequest),
-		styl,
-		ctx,
-		cancel,
-	}
-	if err := editRect(solver.solver, solver.container, casso.Strong); err != nil {
+	go func() {
+		wg.Wait() // once all fields close their constraints channels,
+		close(fieldConstrs)
+	}()
+
+	solver := casso.NewSolver()
+	container := NewSymRect()
+	if err := editRect(solver, container, casso.Strong); err != nil {
 		return nil, err
 	}
 
-	go solver.run()
+	s := &Solver{
+		solver,
+		styl,
+		fieldConstrs,
+		container,
+		fields,
+		make([]sizeConstraintSymbols, nfields),
+		sync.Mutex{},
+	}
 
-	return solver, nil
-}
-
-func (s *Solver) run() {
-	defer close(s.fieldConstrs)
-	defer close(s.layoutConstrs)
-	defer close(s.solveReqs)
-
-	for {
-		select {
-		case tc := <-s.fieldConstrs: // constraint from a field, tagged by field index
+	go func() {
+		for tc := range fieldConstrs {
 			constr, fieldIdx := tc.Val, tc.Tag
 			err := s.addSizeConstraint(constr, fieldIdx)
 			if err != nil {
+				// TODO: run the solver in a golang.org/x/sync/errgroup rather than just logging errors.
 				log.Err.Printf("error adding layout constraint %#v from field %d: %v\n",
 					constr, fieldIdx, err)
 			}
-
-		case req := <-s.layoutConstrs: // constraint from the layout via AddConstraint()
-			_, err := s.solver.AddConstraint(req.constr)
-			req.res <- err
-
-		case req := <-s.solveReqs:
-			fields, err := s.solve(req.container)
-			req.res <- solveResponse{fields, err}
-
-		case <-s.ctx.Done():
-			return
 		}
-	}
+	}()
+
+	return s, nil
+
+	// TODO: add some universal constraints:
+	// - field size <= container size
+	// - field origin >= container origin
 }
 
 // addSizeConstraint adds or modifies a constraint on the size of a
 // field, removing mutually exclusive constraints.
-func (s *Solver) addSizeConstraint(constr Constraint, fieldIdx int) error {
-	fieldSize := s.fields[fieldIdx].Size
-	fieldConstrs := &s.fieldSizeConstrs[fieldIdx]
+func (s *Solver) addSizeConstraint(constr Constraint, i fieldIndex) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fieldSize := s.fields[i].Size
+	fieldConstrs := &s.fieldSizeConstrs[i]
 
 	// Clear mutually exclusive constraints and replace with new one
 	switch constr.Dimension {
@@ -215,11 +195,40 @@ func (s *Solver) removeConstraints(constrs ...*casso.Symbol) error {
 	return nil
 }
 
-func (s *Solver) solve(container image.Rectangle) (fields []image.Rectangle, err error) {
+// Container returns the Cassowary symbols representing the layout
+// container's position and size.
+func (s *Solver) Container() SymRect { return s.container }
+
+// Field returns the Cassowary symbols representing the i'th field's
+// position and size.
+func (s *Solver) Field(i int) SymRect { return s.fields[i] }
+
+// AddConstraint imposes a constraint between two symbols. The symbols
+// may be aspects of the Container() or Field()s.
+//
+// Once added, a constraint cannot be removed or modified.
+func (s *Solver) AddConstraint(op casso.Op, lhs, rhs casso.Symbol) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.solver.AddConstraint(casso.NewConstraint(op, 0, lhs.T(1.0), rhs.T(-1.0)))
+	return err
+}
+
+// Solve uses the constraints that the Solver has received so far to
+// partition container, dividing it among the fields of the layout.
+//
+// It returns a slice of Rectangles, one per field. The slice has the
+// same length as the slice of Constraint channels that were passed to
+// NewSolver().
+func (s *Solver) Solve(container image.Rectangle) ([]image.Rectangle, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := suggestRect(s.solver, s.container, container); err != nil {
 		return nil, err
 	}
-	fields = make([]image.Rectangle, len(s.fields))
+
+	fields := make([]image.Rectangle, len(s.fields))
 	for i := range fields {
 		field := s.fields[i]
 		min := image.Pt(
@@ -234,43 +243,3 @@ func (s *Solver) solve(container image.Rectangle) (fields []image.Rectangle, err
 }
 
 func (s *Solver) intVal(sym casso.Symbol) int { return int(s.solver.Val(sym)) }
-
-// Close destroys the solver. You must first close all the Constraint
-// channels that were passed to NewSolver() before calling Close.
-func (s *Solver) Close() { s.cancel() }
-
-// Container returns the Cassowary symbols representing the layout
-// container's position and size.
-func (s *Solver) Container() SymRect { return s.container }
-
-// Field returns the Cassowary symbols representing the i'th field's
-// position and size.
-func (s *Solver) Field(i int) SymRect { return s.fields[i] }
-
-// AddConstraint imposes a constraint between two symbols. The symbols
-// may be aspects of the Container() or Field()s.
-//
-// Once added, a constraint cannot be removed or modified.
-func (s *Solver) AddConstraint(op casso.Op, lhs, rhs casso.Symbol) error {
-	res := make(chan error)
-	defer close(res)
-	s.layoutConstrs <- constrainRequest{
-		casso.NewConstraint(op, 0, lhs.T(1.0), rhs.T(-1.0)),
-		res,
-	}
-	return <-res
-}
-
-// Solve uses the constraints that the Solver has received so far to
-// partition container, dividing it among the fields of the layout.
-//
-// It returns a slice of Rectangles, one per field. The slice has the
-// same length as the slice of Constraint channels that were passed to
-// NewSolver().
-func (s *Solver) Solve(container image.Rectangle) ([]image.Rectangle, error) {
-	resc := make(chan solveResponse)
-	defer close(resc)
-	s.solveReqs <- solveRequest{container, resc}
-	res := <-resc
-	return res.fields, res.err
-}

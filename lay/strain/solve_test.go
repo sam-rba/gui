@@ -1,14 +1,17 @@
 package strain_test
 
 import (
-	"testing"
+	"fmt"
 	"image"
 	"slices"
+	"testing"
 
 	"github.com/lithdew/casso"
+	"golang.org/x/exp/shiny/unit"
+	"golang.org/x/image/math/fixed"
 
-	"github.com/faiface/gui/style"
 	"github.com/faiface/gui/lay/strain"
+	"github.com/faiface/gui/style"
 )
 
 type solverTest struct {
@@ -30,7 +33,6 @@ func newSolverTest(t *testing.T, constraints []<-chan strain.Constraint) solverT
 }
 
 func (st solverTest) Close() {
-	st.Solver.Close()
 	if err := st.Style.Close(); err != nil {
 		st.t.Error(err)
 	}
@@ -42,13 +44,22 @@ func (st solverTest) addConstraint(op casso.Op, lhs, rhs casso.Symbol) {
 	}
 }
 
-func (st solverTest) solve(container image.Rectangle, wantFields []image.Rectangle) {
+func (st solverTest) solve(container image.Rectangle, validate func(fields []image.Rectangle) error) {
 	fields, err := st.Solver.Solve(container)
 	if err != nil {
-		st.t.Errorf("Solve(%v): %v; want %v", container, err, wantFields)
+		st.t.Errorf("Solve(%v): %v", container, err)
 	}
-	if !slices.Equal(fields, wantFields) {
-		st.t.Errorf("Solve(%v) = %v; want %v", container, fields, wantFields)
+	if err := validate(fields); err != nil {
+		st.t.Errorf("Solve(%v) = %v; %v", container, fields, err)
+	}
+}
+
+func validateEq(wantFields []image.Rectangle) func(fields []image.Rectangle) error {
+	return func(fields []image.Rectangle) error {
+		if !slices.Equal(fields, wantFields) {
+			return fmt.Errorf("want %v", wantFields)
+		}
+		return nil
 	}
 }
 
@@ -75,7 +86,7 @@ func TestSingleField(t *testing.T) {
 	defer st.Close()
 	defer close(constraints)
 
-	// Add constraints
+	// Add layout constraints
 	container := st.Solver.Container()
 	field := st.Solver.Field(0)
 	st.addConstraint(casso.EQ, field.Origin.X, container.Origin.X)
@@ -90,7 +101,7 @@ func TestSingleField(t *testing.T) {
 		image.Rectangle{image.Pt(12, 34), image.Pt(123, 456)},
 	} {
 		// field == container
-		st.solve(container, []image.Rectangle{container})
+		st.solve(container, validateEq([]image.Rectangle{container}))
 	}
 }
 
@@ -102,4 +113,35 @@ func TestLayConstrs(t *testing.T) {
 	defer st.Close()
 
 	t.Fail() // TODO
+}
+
+// Widget gives its minimum size.
+func TestFieldMinSize(t *testing.T) {
+	t.Parallel()
+
+	// Setup
+	constraints := make(chan strain.Constraint)
+	st := newSolverTest(t, []<-chan strain.Constraint{constraints})
+	defer st.Close()
+	defer close(constraints)
+
+	// Add widget constraints
+	minWidth := unit.Value{32, unit.Ch}
+	minHeight := unit.Value{1.5, unit.Em}
+	constraints <- strain.Constraint{strain.Width, casso.GTE, minWidth}
+	constraints <- strain.Constraint{strain.Height, casso.GTE, minHeight}
+
+	// Solve
+	st.solve(image.Rect(12, 34, 800, 600), func(fields []image.Rectangle) error {
+		if len(fields) != 1 {
+			return fmt.Errorf("got %d fields; want %d", len(fields), 1)
+		}
+		field := fields[0]
+		if fixed.I(field.Dx()) < st.Style.Pixels(minWidth) {
+			return fmt.Errorf("dx = %v; want >= %v", field.Dx(), st.Style.Pixels(minWidth))
+		} else if fixed.I(field.Dy()) < st.Style.Pixels(minHeight) {
+			return fmt.Errorf("dy = %v; want >= %v", field.Dy(), st.Style.Pixels(minHeight))
+		}
+		return nil
+	})
 }

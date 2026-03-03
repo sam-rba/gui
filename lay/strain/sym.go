@@ -15,7 +15,7 @@ type SymPt struct {
 // image.Rectangle.
 type SymRect struct {
 	Origin SymPt // top-left corner position
-	Size SymPt // Dx() and Dy()
+	Size   SymPt // Dx() and Dy()
 }
 
 func NewSymPt() SymPt {
