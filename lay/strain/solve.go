@@ -146,9 +146,9 @@ func (s *Solver) addSizeConstraint(constr Constraint, fieldIdx int) error {
 	fieldConstrs := &s.fieldSizeConstrs[fieldIdx]
 
 	// Clear mutually exclusive constraints and replace with new one
-	switch constr.Dim {
+	switch constr.Dimension {
 	case Width:
-		width := s.style.Pixels(constr.Value).Round()
+		width := float64(s.style.Pixels(constr.Value).Round())
 		switch constr.Op {
 		case casso.EQ:
 			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthGte, fieldConstrs.widthLte)
@@ -175,7 +175,7 @@ func (s *Solver) addSizeConstraint(constr Constraint, fieldIdx int) error {
 			panic(fmt.Sprintf("unreachable: impossible %T: %v", constr.Op, constr.Op))
 		}
 	case Height:
-		height := s.style.Pixels(constr.Value).Round()
+		height := float64(s.style.Pixels(constr.Value).Round())
 		switch constr.Op {
 		case casso.EQ:
 			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightGte, fieldConstrs.heightLte)
@@ -202,7 +202,7 @@ func (s *Solver) addSizeConstraint(constr Constraint, fieldIdx int) error {
 			panic(fmt.Sprintf("unreachable: impossible %T: %v", constr.Op, constr.Op))
 		}
 	default:
-		panic(fmt.Sprintf("unreachable: impossible %T: %v", constr.Dim, constr.Dim))
+		panic(fmt.Sprintf("unreachable: impossible %T: %v", constr.Dimension, constr.Dimension))
 	}
 
 	return nil

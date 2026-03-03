@@ -78,13 +78,13 @@ func (mux *Mux) MakeEnv() Env {
 type muxEnv struct {
 	events <-chan Event
 	draw   chan<- func(draw.Image) image.Rectangle
-	impose chan<- Constraint
+	impose chan<- strain.Constraint
 	finish chan<- struct{}
 }
 
 func (m *muxEnv) Events() <-chan Event                          { return m.events }
 func (m *muxEnv) Draw() chan<- func(draw.Image) image.Rectangle { return m.draw }
-func (m *muxEnv) Impose() chan<- Constraint                     { return m.impose }
+func (m *muxEnv) Impose() chan<- strain.Constraint              { return m.impose }
 
 func (m *muxEnv) Close() {
 	m.finish <- *new(struct{})
@@ -96,7 +96,7 @@ func (m *muxEnv) Close() {
 func (mux *Mux) makeEnv(master bool) Env {
 	eventsOut, eventsIn := MakeEventsChan()
 	draws := make(chan func(draw.Image) image.Rectangle)
-	imposes := make(chan Constraint)
+	imposes := make(chan strain.Constraint)
 	finish := make(chan struct{})
 	env := &muxEnv{eventsOut, draws, imposes, finish}
 

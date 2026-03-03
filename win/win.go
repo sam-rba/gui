@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/faiface/gui"
+	"github.com/faiface/gui/lay/strain"
 	"github.com/faiface/mainthread"
 	"github.com/go-gl/gl/v2.1/gl"
 	"github.com/go-gl/glfw/v3.2/glfw"
@@ -23,7 +24,7 @@ type Win struct {
 	eventsOut <-chan gui.Event
 	eventsIn  chan<- gui.Event
 	draw      chan func(draw.Image) image.Rectangle
-	impose    chan gui.Constraint
+	impose    chan strain.Constraint
 
 	newSize chan image.Rectangle
 	ctx     context.Context
@@ -56,7 +57,7 @@ func New(opts ...Option) (*Win, error) {
 		eventsOut: eventsOut,
 		eventsIn:  eventsIn,
 		draw:      make(chan func(draw.Image) image.Rectangle),
-		impose:    make(chan gui.Constraint),
+		impose:    make(chan strain.Constraint),
 		newSize:   make(chan image.Rectangle),
 		ctx:       ctx,
 		cancel:    cancel,
@@ -136,7 +137,7 @@ func (w *Win) Draw() chan<- func(draw.Image) image.Rectangle { return w.draw }
 
 // Impose returns the impose channel of the window.
 // The window ignores constraints sent to the impose channel.
-func (w *Win) Impose() chan<- gui.Constraint { return w.impose }
+func (w *Win) Impose() chan<- strain.Constraint { return w.impose }
 
 // Close destroys the window.
 func (w *Win) Close() {
