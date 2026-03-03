@@ -14,7 +14,8 @@ type SymPt struct {
 // SymRect is a set of Cassowary symbols representing an
 // image.Rectangle.
 type SymRect struct {
-	Min, Max SymPt
+	Origin SymPt // top-left corner position
+	Size SymPt // Dx() and Dy()
 }
 
 func NewSymPt() SymPt {
@@ -28,10 +29,10 @@ func NewSymRect() SymRect {
 // editRect marks all symbols of a rectangle as editable with a
 // certain precedence.
 func editRect(solver *casso.Solver, sr SymRect, p casso.Priority) error {
-	if err := editPt(solver, sr.Min, p); err != nil {
+	if err := editPt(solver, sr.Origin, p); err != nil {
 		return err
 	}
-	if err := editPt(solver, sr.Max, p); err != nil {
+	if err := editPt(solver, sr.Size, p); err != nil {
 		return err
 	}
 	return nil
@@ -50,10 +51,10 @@ func editPt(solver *casso.Solver, sp SymPt, p casso.Priority) error {
 }
 
 func suggestRect(solver *casso.Solver, sr SymRect, r image.Rectangle) error {
-	if err := suggestPt(solver, sr.Min, r.Min); err != nil {
+	if err := suggestPt(solver, sr.Origin, r.Min); err != nil {
 		return err
 	}
-	if err := suggestPt(solver, sr.Max, r.Max); err != nil {
+	if err := suggestPt(solver, sr.Size, image.Pt(r.Dx(), r.Dy())); err != nil {
 		return err
 	}
 	return nil

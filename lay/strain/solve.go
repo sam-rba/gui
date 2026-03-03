@@ -26,8 +26,7 @@ type Solver struct {
 
 	// External symbols
 	container    SymRect // position and size of container
-	fieldOrigins []SymPt // top-left corner position of each field
-	fieldSizes   []SymPt // width and height of each field
+	fields []SymRect // position and size of each field
 
 	fieldSizeConstrs []sizeConstraint
 
@@ -35,7 +34,7 @@ type Solver struct {
 	layoutConstrs chan constrainRequest            // constraints from the layout via AddConstraint()
 	solveReqs     chan solveRequest
 
-	style style.Style
+	style *style.Style
 
 	ctx    context.Context
 	cancel func()
@@ -75,24 +74,21 @@ type solveResponse struct {
 //
 // The Solver should be closed after use, but not before all of the
 // constraint channels have been closed.
-func NewSolver(styl style.Style, constraints []<-chan Constraint) (*Solver, error) {
+func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, error) {
 	nfields := len(constraints)
 
 	fieldConstrs := make(chan tag.Tagged[Constraint, int])
-	fieldOrigins := make([]SymPt, nfields)
-	fieldSizes := make([]SymPt, nfields)
+	fields := make([]SymRect, nfields)
 	for i, cs := range constraints {
 		go tag.Tag(fieldConstrs, cs, func(c Constraint) int { return i })
-		fieldOrigins[i] = NewSymPt()
-		fieldSizes[i] = NewSymPt()
+		fields[i] = NewSymRect()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	solver := &Solver{
 		casso.NewSolver(),
 		NewSymRect(),
-		fieldOrigins,
-		fieldSizes,
+		fields,
 		make([]sizeConstraint, nfields),
 		fieldConstrs,
 		make(chan constrainRequest),
@@ -101,7 +97,7 @@ func NewSolver(styl style.Style, constraints []<-chan Constraint) (*Solver, erro
 		ctx,
 		cancel,
 	}
-	if err := editRect(solver.solver, solver.container, casso.Required); err != nil {
+	if err := editRect(solver.solver, solver.container, casso.Strong); err != nil {
 		return nil, err
 	}
 
@@ -142,7 +138,7 @@ func (s *Solver) run() {
 // addSizeConstraint adds or modifies a constraint on the size of a
 // field, removing mutually exclusive constraints.
 func (s *Solver) addSizeConstraint(constr Constraint, fieldIdx int) error {
-	fieldSize := s.fieldSizes[fieldIdx]
+	fieldSize := s.fields[fieldIdx].Size
 	fieldConstrs := &s.fieldSizeConstrs[fieldIdx]
 
 	// Clear mutually exclusive constraints and replace with new one
@@ -223,15 +219,21 @@ func (s *Solver) solve(container image.Rectangle) (fields []image.Rectangle, err
 	if err := suggestRect(s.solver, s.container, container); err != nil {
 		return nil, err
 	}
-	fields = make([]image.Rectangle, len(s.fieldOrigins))
+	fields = make([]image.Rectangle, len(s.fields))
 	for i := range fields {
-		origin, size := s.fieldOrigins[i], s.fieldSizes[i]
-		min := image.Pt(int(s.solver.Val(origin.X)), int(s.solver.Val(origin.Y)))
-		max := min.Add(image.Pt(int(s.solver.Val(size.X)), int(s.solver.Val(size.Y))))
+		field := s.fields[i]
+		min := image.Pt(
+			s.intVal(field.Origin.X),
+			s.intVal(field.Origin.Y))
+		max := min.Add(image.Pt(
+			s.intVal(field.Size.X),
+			s.intVal(field.Size.Y)))
 		fields[i] = image.Rectangle{min, max}
 	}
 	return fields, nil
 }
+
+func (s *Solver) intVal(sym casso.Symbol) int { return int(s.solver.Val(sym)) }
 
 // Close destroys the solver. You must first close all the Constraint
 // channels that were passed to NewSolver() before calling Close.
@@ -242,10 +244,8 @@ func (s *Solver) Close() { s.cancel() }
 func (s *Solver) Container() SymRect { return s.container }
 
 // Field returns the Cassowary symbols representing the i'th field's
-// position and size. origin represents the position of the top-left
-// corner of the field. size represents the width and height of the
-// field.
-func (s *Solver) Field(i int) (origin, size SymPt) { return s.fieldOrigins[i], s.fieldSizes[i] }
+// position and size.
+func (s *Solver) Field(i int) SymRect { return s.fields[i] }
 
 // AddConstraint imposes a constraint between two symbols. The symbols
 // may be aspects of the Container() or Field()s.
