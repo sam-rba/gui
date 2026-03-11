@@ -80,8 +80,8 @@ func TestSingleField(t *testing.T) {
 	// Setup
 	constraints := make(chan strain.Constraint)
 	st := newSolverTest(t, []<-chan strain.Constraint{constraints})
-	defer st.Close()
 	defer close(constraints)
+	defer st.Close()
 
 	// Add layout constraints
 	container := st.Solver.Container()
@@ -107,10 +107,10 @@ func TestFieldMinSize(t *testing.T) {
 		// Setup
 		constraints := make(chan strain.Constraint)
 		st := newSolverTest(t, []<-chan strain.Constraint{constraints})
-		defer st.Close()
 		defer close(constraints)
+		defer st.Close()
 
-		// Add widget constraints
+		// Add field constraints
 		minWidth := unit.Value{32, unit.Ch}
 		minHeight := unit.Value{1.5, unit.Em}
 		constraints <- strain.Constraint{strain.Width, casso.GTE, minWidth}
@@ -140,26 +140,91 @@ func TestFieldMinSizeLargerThanContainer(t *testing.T) {
 		// Setup
 		constraints := make(chan strain.Constraint)
 		st := newSolverTest(t, []<-chan strain.Constraint{constraints})
-		defer st.Close()
 		defer close(constraints)
+		defer st.Close()
 
-		// Add widget constraints
+		// Add field constraints
 		constraints <- strain.Constraint{strain.Width, casso.GTE, unit.Value{200, unit.Px}}
 		constraints <- strain.Constraint{strain.Height, casso.GTE, unit.Value{300, unit.Px}}
-		synctest.Wait()
 
 		// Solve
 		container := image.Rect(12, 34, 100, 200)
+		synctest.Wait()
 		st.solve(container, validateEq([]image.Rectangle{container}))
 	})
 }
 
-// Solver with only layout constaints, no field constraints.
-func TestLayConstrs(t *testing.T) {
+// Fields arranged as rows.
+func TestRows(t *testing.T) {
 	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		// Setup
+		nrows := 8
+		constraintss := make([]chan strain.Constraint, nrows)
+		for i := range constraintss {
+			constraintss[i] = make(chan strain.Constraint)
+		}
+		st := newSolverTest(t, castRx(constraintss))
+		defer func() {
+			for _, c := range constraintss {
+				close(c)
+			}
+			st.Close()
+		}()
 
-	st := newSolverTest(t, nil)
-	defer st.Close()
+		// Add layout constraints
+		require.NoError(t, st.Solver.AddConstraintPt(casso.EQ, st.Solver.Field(0).Origin, st.Solver.Container().Origin)) // start from top left corner
+		fieldHeights := make([]casso.Term, nrows)
+		for i := 0; i < nrows; i++ {
+			fieldHeights[i] = st.Field(i).Size.Y.T(1)
+			container := st.Solver.Container()
+			f := st.Solver.Field(i)
+			require.NoError(t, st.Solver.AddConstraint(casso.EQ, 0, f.Size.X.T(1), container.Size.X.T(-1))) // span full width
+		}
+		terms := append(fieldHeights, st.Solver.Container().Size.Y.T(-1)) // ∑field[i].height <= container.height
+		require.NoError(t, st.Solver.AddConstraint(casso.LTE, 0, terms...))
+		for i := 1; i < nrows; i++ {
+			f0, f1 := st.Solver.Field(i-1), st.Solver.Field(i)
+			require.NoError(t, st.Solver.AddConstraint(casso.EQ, 0, f1.Origin.Y.T(1), f0.Origin.Y.T(-1), f0.Size.Y.T(-1))) // in order
+			require.NoError(t, st.Solver.AddConstraintPt(casso.EQ, f1.Size, f0.Size))                                      // same size
+		}
 
+		// Add field constraints
+		var rowHeight int
+		for i, c := range constraintss {
+			rowHeight = 2 * i
+			c <- strain.Constraint{strain.Width, casso.GTE, unit.Value{float64(16 + i), unit.Ch}}
+			c <- strain.Constraint{strain.Height, casso.GTE, unit.Value{float64(rowHeight), unit.Px}}
+		}
+
+		// Solve
+		container := image.Rect(123, 234, 567, 678)
+		synctest.Wait()
+		fields, err := st.Solver.Solve(container)
+		if err != nil {
+			t.Fatal(err)
+		}
+		require.EqualValues(t, nrows, len(fields), "wrong number of fields")
+		for _, field := range fields {
+			t.Logf("%v (%d %d)\n", field, field.Dx(), field.Dy())
+		}
+		for i, field := range fields {
+			require.Equal(t, container.Min.X, field.Min.X, "not left-aligned with container")
+			require.Equal(t, container.Min.Y+i*rowHeight, field.Min.Y, "wrong y position")
+			require.Equal(t, container.Dx(), field.Dx(), "wrong width")
+			require.Equal(t, rowHeight, field.Dy(), "wrong height")
+		}
+	})
+}
+
+func TestSolver(t *testing.T) {
 	t.Fail() // TODO: more tests
+}
+
+func castRx[T any](cs []chan T) []<-chan T {
+	rcs := make([]<-chan T, len(cs))
+	for i, c := range cs {
+		rcs[i] = c
+	}
+	return rcs
 }
