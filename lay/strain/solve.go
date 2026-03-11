@@ -20,6 +20,15 @@ const (
 	fieldPriority  = casso.Medium
 )
 
+// solver wraps Solver and protects the not-thread-safe casso.Solver.
+type solver struct {
+	s                *Solver
+	cs               *casso.Solver
+	style            *style.Style
+	fieldSizeConstrs []sizeConstraintSymbols
+	ctx              context.Context
+}
+
 // Solver uses the Cassowary algorithm to partition a rectangle among
 // several layout fields.
 //
@@ -39,8 +48,6 @@ type Solver struct {
 	solveReqs     chan solveRequest
 }
 
-type fieldIndex int
-
 // sizeConstraintSymbols is a set of constraint ID symbols that
 // control the upper/lower/exact bounds on the width and height of a
 // field.
@@ -53,6 +60,8 @@ type sizeConstraintSymbols struct {
 	// not mutually exclusive (can have both a lower and upper bound).
 	// Nil means no constraint.
 }
+
+type fieldIndex int
 
 type constrainRequest struct {
 	casso.Priority
@@ -98,98 +107,87 @@ func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, err
 		cancel()  // destroy the solver
 	}()
 
-	solver := casso.NewSolver()
+	cs := casso.NewSolver()
 	container := NewSymRect()
-	if err := editRect(solver, container, casso.Strong); err != nil {
+	if err := editRect(cs, container, casso.Strong); err != nil {
 		cancel()
 		return nil, fmt.Errorf("error marking container symbol as editable: %w", err)
 	}
 
-	s := &Solver{
-		container,
-		fields,
-		fieldConstrs,
-		make(chan constrainRequest),
-		make(chan solveRequest),
+	s := &solver{
+		&Solver{
+			container,
+			fields,
+			fieldConstrs,
+			make(chan constrainRequest),
+			make(chan solveRequest),
+		},
+		cs,
+		styl,
+		make([]sizeConstraintSymbols, nfields),
+		ctx,
 	}
-	go s.run(ctx, solver, styl)
-	if err := s.addDefaultConstraints(); err != nil {
+	go s.run()
+	if err := s.s.addDefaultConstraints(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("error adding default constraint: %w", err)
 	}
-	return s, nil
+	return s.s, nil
 }
 
-func (s *Solver) run(ctx context.Context, solver *casso.Solver, styl *style.Style) {
-	defer close(s.fieldConstrs)
-	defer close(s.layoutConstrs)
-	defer close(s.solveReqs)
+func (s *solver) run() {
+	defer close(s.s.fieldConstrs)
+	defer close(s.s.layoutConstrs)
+	defer close(s.s.solveReqs)
 
-	fieldSizeConstrs := make([]sizeConstraintSymbols, len(s.fields))
 	for {
 		select {
-		case tc, ok := <-s.fieldConstrs:
-			if !ok {
-				return
-			}
+		case tc := <-s.s.fieldConstrs:
 			constr, i := tc.Val, tc.Tag
-			err := addFieldSizeConstraint(solver, styl, constr, s.fields[i], &fieldSizeConstrs[i])
-			if err != nil {
+			if err := s.addFieldSizeConstraint(constr, s.s.fields[i], &s.fieldSizeConstrs[i]); err != nil {
 				log.Err.Printf("error adding layout constraint %#v from field %d: %v\n",
 					constr, i, err)
 			}
 
-		case req := <-s.layoutConstrs:
-			_, err := addConstraint(solver, req.Priority, req.Op, req.constant, req.terms...)
+		case req := <-s.s.layoutConstrs:
+			_, err := s.addConstraint(req.Priority, req.Op, req.constant, req.terms...)
 			req.res <- err
 
-		case req := <-s.solveReqs:
-			fields, err := s.solve(solver, req.container)
+		case req := <-s.s.solveReqs:
+			fields, err := s.solve(req.container)
 			req.res <- solveResponse{fields, err}
 
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			return
 		}
 	}
 }
 
-func (s *Solver) addDefaultConstraints() error {
-	for _, field := range s.fields {
-		if err := s.addConstraintPt(solverPriority, casso.GTE, field.Origin, s.container.Origin); err != nil {
-			return err
-		}
-		if err := s.addConstraintPt(solverPriority, casso.LTE, field.Size, s.container.Size); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // addFieldSizeConstraint adds or modifies a constraint on the size of
 // a field, removing mutually exclusive constraints.
-func addFieldSizeConstraint(s *casso.Solver, styl *style.Style, constr Constraint, field SymRect, fieldConstrs *sizeConstraintSymbols) error {
+func (s *solver) addFieldSizeConstraint(constr Constraint, field SymRect, fieldConstrs *sizeConstraintSymbols) error {
 	// Clear mutually exclusive constraints and replace with new one
 	switch constr.Dimension {
 	case Width:
-		width := float64(styl.Pixels(constr.Value).Round())
+		width := float64(s.style.Pixels(constr.Value).Round())
 		switch constr.Op {
 		case casso.EQ:
-			removeConstraints(s, fieldConstrs.widthEq, fieldConstrs.widthGte, fieldConstrs.widthLte)
-			c, err := addConstraint(s, fieldPriority, constr.Op, -width, field.Size.X.T(1.0))
+			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthGte, fieldConstrs.widthLte)
+			c, err := s.addConstraint(fieldPriority, constr.Op, -width, field.Size.X.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.widthEq = &c
 		case casso.GTE:
-			removeConstraints(s, fieldConstrs.widthEq, fieldConstrs.widthGte)
-			c, err := addConstraint(s, fieldPriority, constr.Op, -width, field.Size.X.T(1.0))
+			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthGte)
+			c, err := s.addConstraint(fieldPriority, constr.Op, -width, field.Size.X.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.widthGte = &c
 		case casso.LTE:
-			removeConstraints(s, fieldConstrs.widthEq, fieldConstrs.widthLte)
-			c, err := addConstraint(s, fieldPriority, constr.Op, -width, field.Size.X.T(1.0))
+			s.removeConstraints(fieldConstrs.widthEq, fieldConstrs.widthLte)
+			c, err := s.addConstraint(fieldPriority, constr.Op, -width, field.Size.X.T(1.0))
 			if err != nil {
 				return err
 			}
@@ -198,25 +196,25 @@ func addFieldSizeConstraint(s *casso.Solver, styl *style.Style, constr Constrain
 			panic(fmt.Sprintf("unreachable: impossible %T: %v", constr.Op, constr.Op))
 		}
 	case Height:
-		height := float64(styl.Pixels(constr.Value).Round())
+		height := float64(s.style.Pixels(constr.Value).Round())
 		switch constr.Op {
 		case casso.EQ:
-			removeConstraints(s, fieldConstrs.heightEq, fieldConstrs.heightGte, fieldConstrs.heightLte)
-			c, err := addConstraint(s, fieldPriority, constr.Op, -height, field.Size.Y.T(1.0))
+			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightGte, fieldConstrs.heightLte)
+			c, err := s.addConstraint(fieldPriority, constr.Op, -height, field.Size.Y.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.heightEq = &c
 		case casso.GTE:
-			removeConstraints(s, fieldConstrs.heightEq, fieldConstrs.heightGte)
-			c, err := addConstraint(s, fieldPriority, constr.Op, -height, field.Size.Y.T(1.0))
+			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightGte)
+			c, err := s.addConstraint(fieldPriority, constr.Op, -height, field.Size.Y.T(1.0))
 			if err != nil {
 				return err
 			}
 			fieldConstrs.heightGte = &c
 		case casso.LTE:
-			removeConstraints(s, fieldConstrs.heightEq, fieldConstrs.heightLte)
-			c, err := addConstraint(s, fieldPriority, constr.Op, -height, field.Size.Y.T(1.0))
+			s.removeConstraints(fieldConstrs.heightEq, fieldConstrs.heightLte)
+			c, err := s.addConstraint(fieldPriority, constr.Op, -height, field.Size.Y.T(1.0))
 			if err != nil {
 				return err
 			}
@@ -231,10 +229,10 @@ func addFieldSizeConstraint(s *casso.Solver, styl *style.Style, constr Constrain
 	return nil
 }
 
-func removeConstraints(s *casso.Solver, constrs ...*casso.Symbol) error {
+func (s *solver) removeConstraints(constrs ...*casso.Symbol) error {
 	for _, constr := range constrs {
 		if constr != nil {
-			if err := s.RemoveConstraint(*constr); err != nil {
+			if err := s.cs.RemoveConstraint(*constr); err != nil {
 				return err
 			}
 		}
@@ -242,30 +240,42 @@ func removeConstraints(s *casso.Solver, constrs ...*casso.Symbol) error {
 	return nil
 }
 
-func addConstraint(s *casso.Solver, priority casso.Priority, op casso.Op, constant float64, terms ...casso.Term) (casso.Symbol, error) {
-	return s.AddConstraintWithPriority(priority, casso.NewConstraint(op, constant, terms...))
+func (s *solver) addConstraint(priority casso.Priority, op casso.Op, constant float64, terms ...casso.Term) (casso.Symbol, error) {
+	return s.cs.AddConstraintWithPriority(priority, casso.NewConstraint(op, constant, terms...))
 }
 
-func (s *Solver) solve(solver *casso.Solver, container image.Rectangle) (fields []image.Rectangle, err error) {
-	if err := suggestRect(solver, s.container, container); err != nil {
+func (s *solver) solve(container image.Rectangle) (fields []image.Rectangle, err error) {
+	if err := suggestRect(s.cs, s.s.container, container); err != nil {
 		return nil, err
 	}
 
-	fields = make([]image.Rectangle, len(s.fields))
-	for i, field := range s.fields {
+	fields = make([]image.Rectangle, len(s.s.fields))
+	for i, field := range s.s.fields {
 		min := image.Pt(
-			s.val(solver, field.Origin.X),
-			s.val(solver, field.Origin.Y))
+			s.val(field.Origin.X),
+			s.val(field.Origin.Y))
 		max := min.Add(image.Pt(
-			s.val(solver, field.Size.X),
-			s.val(solver, field.Size.Y)))
+			s.val(field.Size.X),
+			s.val(field.Size.Y)))
 		fields[i] = image.Rectangle{min, max}
 	}
 	return fields, nil
 }
 
-func (s *Solver) val(solver *casso.Solver, sym casso.Symbol) int {
-	return int(math.Round(solver.Val(sym)))
+func (s *solver) val(sym casso.Symbol) int {
+	return int(math.Round(s.cs.Val(sym)))
+}
+
+func (s *Solver) addDefaultConstraints() error {
+	for _, field := range s.fields {
+		if err := s.addConstraintPt(solverPriority, casso.GTE, field.Origin, s.container.Origin); err != nil {
+			return err
+		}
+		if err := s.addConstraintPt(solverPriority, casso.LTE, field.Size, s.container.Size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Container returns the Cassowary symbols representing the layout
