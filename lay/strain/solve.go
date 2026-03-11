@@ -20,15 +20,6 @@ const (
 	fieldPriority  = casso.Medium
 )
 
-// solver wraps Solver and protects the not-thread-safe casso.Solver.
-type solver struct {
-	s                *Solver
-	cs               *casso.Solver
-	style            *style.Style
-	fieldSizeConstrs []sizeConstraintSymbols
-	ctx              context.Context
-}
-
 // Solver uses the Cassowary algorithm to partition a rectangle among
 // several layout fields.
 //
@@ -39,13 +30,25 @@ type solver struct {
 // and size of fields within the container, while the field
 // constraints control the width and height of each field.
 type Solver struct {
-	// External symbols
-	container SymRect   // position and size of container
-	fields    []SymRect // position and size of each field
+	container SymRect
+	fields    []SymRect
+
+	fieldConstrs  chan<- tag.Tagged[Constraint, fieldIndex]
+	layoutConstrs chan<- constrainRequest
+	solveReqs     chan<- solveRequest
+}
+
+type solver struct {
+	*casso.Solver
+	container        SymRect
+	fields           []SymRect
+	fieldSizeConstrs []sizeConstraintSymbols
 
 	fieldConstrs  chan tag.Tagged[Constraint, fieldIndex]
 	layoutConstrs chan constrainRequest
 	solveReqs     chan solveRequest
+
+	style *style.Style
 }
 
 // sizeConstraintSymbols is a set of constraint ID symbols that
@@ -87,13 +90,11 @@ type solveResponse struct {
 // Impose() channels.
 func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, error) {
 	nfields := len(constraints)
-	fields := make([]SymRect, nfields)
-	fieldConstrs := make(chan tag.Tagged[Constraint, fieldIndex])
 	var wg sync.WaitGroup
 	wg.Add(nfields)
+	fieldConstrs := make(chan tag.Tagged[Constraint, fieldIndex])
 	ctx, cancel := context.WithCancel(context.Background())
-	for i := range fields {
-		fields[i] = NewSymRect()
+	for i := 0; i < nfields; i++ {
 		go func() {
 			// Tag incoming field constraints by field index and multiplex them into fieldConstrs
 			tag.Tag(ctx, fieldConstrs, constraints[i], func(c Constraint) fieldIndex {
@@ -107,57 +108,72 @@ func NewSolver(styl *style.Style, constraints []<-chan Constraint) (*Solver, err
 		cancel()  // destroy the solver
 	}()
 
-	cs := casso.NewSolver()
-	container := NewSymRect()
-	if err := editRect(cs, container, casso.Strong); err != nil {
+	layoutConstrs := make(chan constrainRequest)
+	solveReqs := make(chan solveRequest)
+	sol, err := newSolver(nfields, fieldConstrs, layoutConstrs, solveReqs, styl)
+	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("error marking container symbol as editable: %w", err)
+		return nil, err
 	}
+	go sol.run(ctx)
 
-	s := &solver{
-		&Solver{
-			container,
-			fields,
-			fieldConstrs,
-			make(chan constrainRequest),
-			make(chan solveRequest),
-		},
-		cs,
-		styl,
-		make([]sizeConstraintSymbols, nfields),
-		ctx,
+	s := &Solver{
+		sol.container,
+		sol.fields,
+		fieldConstrs,
+		layoutConstrs,
+		solveReqs,
 	}
-	go s.run()
-	if err := s.s.addDefaultConstraints(); err != nil {
+	if err := s.addDefaultConstraints(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("error adding default constraint: %w", err)
 	}
-	return s.s, nil
+	return s, nil
 }
 
-func (s *solver) run() {
-	defer close(s.s.fieldConstrs)
-	defer close(s.s.layoutConstrs)
-	defer close(s.s.solveReqs)
+func newSolver(nfields int, fieldConstrs chan tag.Tagged[Constraint, fieldIndex], layoutConstrs chan constrainRequest, solveReqs chan solveRequest, styl *style.Style) (*solver, error) {
+	cs := casso.NewSolver()
+	container := NewSymRect()
+	fields := make([]SymRect, nfields)
+	for i := range fields {
+		fields[i] = NewSymRect()
+	}
+	if err := editRect(cs, container, casso.Strong); err != nil {
+		return nil, fmt.Errorf("error marking container symbol as editable: %w", err)
+	}
+	return &solver{
+		cs,
+		container,
+		fields,
+		make([]sizeConstraintSymbols, nfields),
+		fieldConstrs, layoutConstrs, solveReqs,
+		styl,
+	}, nil
+}
+
+func (s *solver) run(ctx context.Context) {
+	defer close(s.fieldConstrs)
+	defer close(s.layoutConstrs)
+	defer close(s.solveReqs)
 
 	for {
 		select {
-		case tc := <-s.s.fieldConstrs:
+		case tc := <-s.fieldConstrs:
 			constr, i := tc.Val, tc.Tag
-			if err := s.addFieldSizeConstraint(constr, s.s.fields[i], &s.fieldSizeConstrs[i]); err != nil {
+			if err := s.addFieldSizeConstraint(constr, s.fields[i], &s.fieldSizeConstrs[i]); err != nil {
 				log.Err.Printf("error adding layout constraint %#v from field %d: %v\n",
 					constr, i, err)
 			}
 
-		case req := <-s.s.layoutConstrs:
+		case req := <-s.layoutConstrs:
 			_, err := s.addConstraint(req.Priority, req.Op, req.constant, req.terms...)
 			req.res <- err
 
-		case req := <-s.s.solveReqs:
+		case req := <-s.solveReqs:
 			fields, err := s.solve(req.container)
 			req.res <- solveResponse{fields, err}
 
-		case <-s.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -232,7 +248,7 @@ func (s *solver) addFieldSizeConstraint(constr Constraint, field SymRect, fieldC
 func (s *solver) removeConstraints(constrs ...*casso.Symbol) error {
 	for _, constr := range constrs {
 		if constr != nil {
-			if err := s.cs.RemoveConstraint(*constr); err != nil {
+			if err := s.Solver.RemoveConstraint(*constr); err != nil {
 				return err
 			}
 		}
@@ -241,16 +257,16 @@ func (s *solver) removeConstraints(constrs ...*casso.Symbol) error {
 }
 
 func (s *solver) addConstraint(priority casso.Priority, op casso.Op, constant float64, terms ...casso.Term) (casso.Symbol, error) {
-	return s.cs.AddConstraintWithPriority(priority, casso.NewConstraint(op, constant, terms...))
+	return s.Solver.AddConstraintWithPriority(priority, casso.NewConstraint(op, constant, terms...))
 }
 
 func (s *solver) solve(container image.Rectangle) (fields []image.Rectangle, err error) {
-	if err := suggestRect(s.cs, s.s.container, container); err != nil {
+	if err := suggestRect(s.Solver, s.container, container); err != nil {
 		return nil, err
 	}
 
-	fields = make([]image.Rectangle, len(s.s.fields))
-	for i, field := range s.s.fields {
+	fields = make([]image.Rectangle, len(s.fields))
+	for i, field := range s.fields {
 		min := image.Pt(
 			s.val(field.Origin.X),
 			s.val(field.Origin.Y))
@@ -263,7 +279,7 @@ func (s *solver) solve(container image.Rectangle) (fields []image.Rectangle, err
 }
 
 func (s *solver) val(sym casso.Symbol) int {
-	return int(math.Round(s.cs.Val(sym)))
+	return int(math.Round(s.Solver.Val(sym)))
 }
 
 func (s *Solver) addDefaultConstraints() error {
